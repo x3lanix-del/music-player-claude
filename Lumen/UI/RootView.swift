@@ -161,10 +161,9 @@ struct MiniPlayerBar: View {
                              : t.artist)
                             .font(.system(size: 12)).foregroundStyle(ink.opacity(0.65)).lineLimit(1)
                     }
-                    // Nowa piosenka wjeżdża od dołu, poprzednia znika.
+                    // Nowa piosenka: tytuł płynnie się przenika (bez wjeżdżania).
                     .id(t.id)
-                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
-                                            removal: .opacity))
+                    .transition(.opacity)
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())

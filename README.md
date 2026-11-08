@@ -1,3 +1,7 @@
+## 1.29.2
+- Usunięta animowana ikona grającej piosenki na liście (przy włączaniu piosenki rysowała czarne pole na liście);
+  wraca zwykła ikonka głośnika. Tytuł w mini-odtwarzaczu przy zmianie piosenki tylko płynnie się przenika.
+
 ## 1.29.1
 - Menu „•••” w odtwarzaczu jest krótsze: Dodaj do playlisty, Tekst piosenki (inna wersja, wcześniej / później,
   tłumaczenie), Wyłącznik czasowy (15 / 30 / 60 min, po piosence), Edytor dźwięku, Udostępnij.
