@@ -13,7 +13,9 @@ actor LyricsTranslator {
 
     /// Zwraca tłumaczenia w tej samej kolejności co `lines` (puste linijki zostają puste) albo nil przy błędzie.
     func translate(_ lines: [String], to lang: String, key: String) async -> [String]? {
-        let ck = "\(key)|\(lang)|\(lines.count)"
+        // Klucz zależy od treści: inna wersja tekstu tej samej piosenki (np. podmiana na wersję słowo po słowie)
+        // z tą samą liczbą linijek nie może dostać starego tłumaczenia.
+        let ck = "\(key)|\(lang)|\(lines.count)|\(LyricsProviders.stableID(lines.joined(separator: "\n")))"
         if let hit = cache[ck] { return hit }
         let indices = lines.indices.filter { !lines[$0].trimmingCharacters(in: .whitespaces).isEmpty }
         guard !indices.isEmpty else { return nil }

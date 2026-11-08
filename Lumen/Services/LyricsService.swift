@@ -1,6 +1,6 @@
 import Foundation
 
-struct LyricsCandidate: Identifiable, Codable, Equatable {
+struct LyricsCandidate: Identifiable, Codable, Equatable, Sendable {
     var id: Int
     var trackName: String?
     var artistName: String?
@@ -23,7 +23,7 @@ struct LyricsCandidate: Identifiable, Codable, Equatable {
     var uid: String { "\(source ?? "?")-\(id)" }
 }
 
-enum LyricsResult: Equatable {
+enum LyricsResult: Equatable, Sendable {
     case synced([LyricLine])
     case plain(String)
     case instrumental
@@ -32,58 +32,117 @@ enum LyricsResult: Equatable {
     case offline
 }
 
-/// Time-synced lyrics from two free services at once - LRCLIB (https://lrclib.net) and NetEase Cloud Music -
+/// Wynik wyszukiwania tekstu jednej piosenki.
+struct LyricsLookup: Sendable {
+    let result: LyricsResult
+    let candidate: LyricsCandidate?
+}
+
+/// Time-synced lyrics from many free services at once (Apple Music TTML mirrors, LRCLIB, NetEase, Kugou...) -
 /// the best matching version (title, artist and above all the same duration as the video) wins.
 /// Results are cached on disk, so a song's lyrics are downloaded only once.
+///
+/// Szybkość:
+/// - wszystkie źródła i wszystkie warianty tytułu startują naraz (z małym rozstawieniem), a nie jedno po drugim,
+/// - tekst z czasem linijek pokazuje się od razu (`interim`), a wersja słowo po słowie podmienia go, gdy przyjdzie,
+/// - ta sama piosenka nigdy nie jest szukana dwa razy jednocześnie (np. pobieranie z wyprzedzeniem + odtwarzanie),
+/// - pobieranie całej biblioteki w tle ustępuje miejsca piosence, która właśnie gra.
 actor LyricsService {
     static let shared = LyricsService()
 
+    typealias Interim = @Sendable (LyricsCandidate) async -> Void
+
     private var memory: [String: LyricsCandidate] = [:]
+    private var inflight: [String: Task<LyricsLookup, Never>] = [:]
+    /// Ile wyszukiwań "na pierwszym planie" (grająca piosenka) trwa teraz - tło wtedy czeka.
+    private var foreground = 0
     private var sawNetworkError = false
     private var prefetching = false
     private let session: URLSession
 
     init() {
         let cfg = URLSessionConfiguration.default
-        cfg.timeoutIntervalForRequest = 12
-        cfg.httpAdditionalHeaders = ["User-Agent": "MusicPlayer/1.3 (iOS music player)"]
+        cfg.timeoutIntervalForRequest = 8
+        cfg.timeoutIntervalForResource = 14
+        cfg.httpMaximumConnectionsPerHost = 6
+        cfg.waitsForConnectivity = false
+        cfg.httpAdditionalHeaders = ["User-Agent": "MusicPlayer/1.29 (iOS music player)"]
         session = URLSession(configuration: cfg)
     }
 
     // MARK: Public
 
-    func lyrics(for track: Track) async -> (result: LyricsResult, candidate: LyricsCandidate?) {
-        if let c = memory[track.id] ?? readCache(track.id) {
-            memory[track.id] = c
-            return (LyricsService.result(from: c), c)
+    /// Tekst piosenki z pamięci, dysku albo internetu. `interim` dostaje tekst z czasem linijek, gdy jest gotowy
+    /// wcześniej niż wersja słowo po słowie (którą zwraca dopiero wynik końcowy).
+    func lyrics(for track: Track, foreground isForeground: Bool = false, interim: Interim? = nil) async -> LyricsLookup {
+        if let c = cached(track.id) {
+            return LyricsLookup(result: LyricsService.result(from: c), candidate: c)
         }
-        // Nie polegamy na samym NWPathMonitor (bywa nieaktualny) - po prostu próbujemy; dwa podejścia.
+        // Ta piosenka już jest szukana (np. pobieranie z wyprzedzeniem): czekamy na ten sam wynik zamiast pytać drugi raz.
+        if let running = inflight[track.id] {
+            if isForeground { foreground += 1 }
+            let out = await running.value
+            if isForeground { foreground -= 1 }
+            return out
+        }
+        let task = Task { await self.lookupFresh(track, interim: interim) }
+        inflight[track.id] = task
+        if isForeground { foreground += 1 }
+        let out = await task.value
+        if isForeground { foreground -= 1 }
+        inflight[track.id] = nil
+        return out
+    }
+
+    /// Tekst z pamięci albo z dysku (bez sieci).
+    func cached(_ id: String) -> LyricsCandidate? {
+        if let c = memory[id] { return c }
+        if let c = readCache(id) {
+            memory[id] = c
+            return c
+        }
+        return nil
+    }
+
+    private func lookupFresh(_ track: Track, interim: Interim?) async -> LyricsLookup {
+        // Nie polegamy na samym NWPathMonitor (bywa nieaktualny) - po prostu próbujemy.
         sawNetworkError = false
-        var attempt = await find(track)
-        if attempt == nil {
-            try? await Task.sleep(nanoseconds: 1_200_000_000)
-            attempt = await find(track)
+        var attempt = await find(track, interim: interim)
+        // Drugie podejście tylko wtedy, gdy po drodze był błąd sieci (a nie zwykły brak tekstu) - wcześniej
+        // każde "nie znaleziono" było szukane dwa razy, co podwajało czekanie.
+        if attempt == nil, sawNetworkError, Reachability.shared.online {
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            sawNetworkError = false
+            attempt = await find(track, interim: interim)
         }
         guard let found = attempt else {
             let offline = !Reachability.shared.online
-            return (offline ? .offline : .notFound, nil)
+            return LyricsLookup(result: offline ? .offline : .notFound, candidate: nil)
         }
         memory[track.id] = found
         writeCache(found, id: track.id)
-        return (LyricsService.result(from: found), found)
+        return LyricsLookup(result: LyricsService.result(from: found), candidate: found)
     }
 
-    /// Manual search (picker): both services, any version.
+    /// Manual search (picker): all line services, any version.
     func search(query: String) async -> [LyricsCandidate] {
         async let a = lrclibSafe(["q": query])
         async let b = netease(query: query, guess: nil, duration: 0, limit: 6)
-        let all = (await a) + (await b)
-        return Array(all.filter { $0.hasSynced || $0.hasPlain || $0.instrumental == true }.prefix(30))
+        async let k = kugou(query: query, duration: 0, limit: 4)
+        let all = (await a) + (await b) + (await k)
+        var seen = Set<String>()
+        return Array(all.filter { ($0.hasSynced || $0.hasPlain || $0.instrumental == true) && seen.insert($0.uid).inserted }.prefix(40))
     }
 
     func choose(_ candidate: LyricsCandidate, for trackID: String) {
         memory[trackID] = candidate
         writeCache(candidate, id: trackID)
+    }
+
+    /// Usuwa zapamiętany tekst jednej piosenki (np. "Szukaj tekstu od nowa").
+    func forget(_ trackID: String) {
+        memory[trackID] = nil
+        try? FileManager.default.removeItem(at: fileURL(trackID))
     }
 
     func clearCache() {
@@ -113,40 +172,85 @@ actor LyricsService {
 
     // MARK: Matching
 
-    private func find(_ track: Track) async -> LyricsCandidate? {
+    private enum Stage: Sendable {
+        case providers(word: LyricsCandidate?, fallback: LyricsCandidate?)
+        case lines(Scored?)
+    }
+
+    typealias Scored = (score: Double, cand: LyricsCandidate)
+
+    private func find(_ track: Track, interim: Interim?) async -> LyricsCandidate? {
         let guesses = TitleCleaner.guesses(title: track.title, channel: track.artist)
         let prefs = LyricsSourcePrefs.current
 
-        // Obie grupy źródeł startują jednocześnie (wcześniej szły jedna po drugiej, co wydłużało czekanie na tekst).
-        async let providers = providerStage(track: track, guesses: guesses, prefs: prefs)
-        async let lines = lineStage(track: track, guesses: guesses, prefs: prefs)
+        // Obie grupy źródeł startują jednocześnie. Kto pierwszy, ten lepszy:
+        // - słowo po słowie (Apple Music i spółka) wygrywa od razu i przerywa resztę,
+        // - zwykły tekst z czasem linijek pokazuje się od razu jako wersja tymczasowa.
+        var wordHit: LyricsCandidate? = nil
+        var providerFallback: LyricsCandidate? = nil
+        var best: Scored? = nil
+        await withTaskGroup(of: Stage.self) { group in
+            group.addTask {
+                let r = await self.providerStage(track: track, guesses: guesses, prefs: prefs)
+                return Stage.providers(word: r.word, fallback: r.fallback)
+            }
+            group.addTask {
+                let found = await self.lineStage(track: track, guesses: guesses, prefs: prefs)
+                return Stage.lines(found)
+            }
+            var providersDone = false
+            while let stage = await group.next() {
+                switch stage {
+                case .providers(let word, let fallback):
+                    providersDone = true
+                    wordHit = word
+                    providerFallback = fallback
+                    if word != nil { group.cancelAll() }
+                case .lines(let found):
+                    best = found
+                    if !providersDone, wordHit == nil, let b = found, b.score >= 100, let interim = interim {
+                        await interim(b.cand)
+                    }
+                }
+            }
+        }
 
-        // 1) Źródła z czasem słowo po słowie (Apple Music, BiniLyrics, LyricsPlus...). Jeśli któreś ma tekst, wygrywa;
-        //    tekst z czasem samych linijek z tych źródeł zostaje jako zapas.
-        let (wordHit, providerFallback) = await providers
+        // 1) Źródła z czasem słowo po słowie.
         if let w = wordHit { return w }
-
-        // 2) Zwykłe źródła z czasem linijek (LRCLIB, NetEase, Kugou).
-        var best = await lines
+        // 2) Zwykłe źródła z czasem linijek (LRCLIB, NetEase, Kugou), a gdy słabe - zapas ze źródeł "słownych".
         if best == nil || (best?.score ?? 0) < 100, let fallback = providerFallback {
             return fallback
         }
         // Sam tytuł (bez wykonawcy): wykonawca z kanału YouTube bywa błędny (np. nazwa wytwórni), a tytuł wystarcza.
         if best == nil || (best?.score ?? 0) < 60, prefs.isEnabled("lrclib") {
-            for g in guesses.prefix(3) {
-                let results = await lrclibSafe(["q": g.title])
-                if let hit = pick(results, guess: g, duration: track.duration), hit.score > (best?.score ?? -1) {
-                    best = hit
-                    if hit.score >= 100 { break }
+            let titleOnly = await withTaskGroup(of: Scored?.self, returning: Scored?.self) { group in
+                for g in guesses.prefix(3) {
+                    group.addTask {
+                        let results = await self.lrclibSafe(["q": g.title])
+                        return self.pick(results, guess: g, duration: track.duration)
+                    }
                 }
+                var top: Scored? = nil
+                while let hit = await group.next() {
+                    if let h = hit, h.score > (top?.score ?? -1) { top = h }
+                }
+                return top
             }
+            if let hit = titleOnly, hit.score > (best?.score ?? -1) { best = hit }
         }
         if best == nil, let fallback = providerFallback { return fallback }
         // Ostatnia deska ratunku: sam tekst bez czasów (potem aplikacja ustawi czasy ze słuchu).
         if best == nil, prefs.isEnabled("ovh") {
-            for g in guesses {
-                if let plain = await lyricsOvh(g) { return plain }
+            let plain = await withTaskGroup(of: LyricsCandidate?.self, returning: LyricsCandidate?.self) { group in
+                for g in guesses.prefix(4) {
+                    group.addTask { await self.lyricsOvh(g) }
+                }
+                while let hit = await group.next() {
+                    if let h = hit { group.cancelAll(); return h }
+                }
+                return nil
             }
+            if let p = plain { return p }
         }
         return best?.cand
     }
@@ -155,7 +259,10 @@ actor LyricsService {
                                prefs: LyricsSourcePrefs) async -> (word: LyricsCandidate?, fallback: LyricsCandidate?) {
         guard !prefs.activeProviders.isEmpty else { return (nil, nil) }
         var fallback: LyricsCandidate? = nil
-        for g in guesses.prefix(2) {
+        for (n, g) in guesses.prefix(2).enumerated() {
+            if Task.isCancelled { break }
+            // Drugi wariant (zamienione wykonawca/tytuł) tylko wtedy, gdy pierwszy nie dał nic.
+            if n > 0, fallback != nil { break }
             let results = await LyricsProviders.lookup(videoId: track.id, title: g.title, artist: g.artist,
                                                       duration: track.duration, prefs: prefs, all: false)
             let usable = results.filter { $0.plausible(for: track.duration) }
@@ -169,25 +276,39 @@ actor LyricsService {
         return (nil, fallback)
     }
 
-    private func lineStage(track: Track, guesses: [TitleCleaner.Guess],
-                           prefs: LyricsSourcePrefs) async -> (score: Double, cand: LyricsCandidate)? {
-        var best: (score: Double, cand: LyricsCandidate)? = nil
-        for g in guesses {
-            let results = await lineSourceResults(g, duration: track.duration, neteaseLimit: 3, prefs: prefs)
-            if let hit = pick(results, guess: g, duration: track.duration), hit.score > (best?.score ?? -1) {
-                best = hit
+    /// Wszystkie warianty tytułu naraz (kolejne startują z małym opóźnieniem, bo zwykle trafia już pierwszy).
+    private func lineStage(track: Track, guesses: [TitleCleaner.Guess], prefs: LyricsSourcePrefs) async -> Scored? {
+        let duration = track.duration
+        let wide = prefs.isEnabled("lrclib") ? guesses.first : nil
+        return await withTaskGroup(of: Scored?.self, returning: Scored?.self) { group in
+            for (i, g) in guesses.enumerated() {
+                group.addTask {
+                    if i > 0 { try? await Task.sleep(nanoseconds: UInt64(i) * 220_000_000) }
+                    if Task.isCancelled { return nil }
+                    let results = await self.lineSourceResults(g, duration: duration, neteaseLimit: 3, prefs: prefs)
+                    return self.pick(results, guess: g, duration: duration)
+                }
             }
-            // Idealne trafienie (synchronizacja + ten sam czas trwania) - nie szukamy dalej.
-            if let b = best, b.score >= 128 { break }
-        }
-        if best == nil || (best?.score ?? 0) < 100, let first = guesses.first, prefs.isEnabled("lrclib") {
-            let q = "\(first.artist) \(first.title)"
-            let results = await lrclibSafe(["q": q])
-            if let hit = pick(results, guess: first, duration: track.duration), hit.score > (best?.score ?? -1) {
-                best = hit
+            if let first = wide {
+                // Szerokie wyszukiwanie "wykonawca tytuł" - zapas, gdy dokładne pola nie trafiły.
+                group.addTask {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    if Task.isCancelled { return nil }
+                    let results = await self.lrclibSafe(["q": "\(first.artist) \(first.title)"])
+                    return self.pick(results, guess: first, duration: duration)
+                }
             }
+            var best: Scored? = nil
+            while let hit = await group.next() {
+                if let h = hit, h.score > (best?.score ?? -1) { best = h }
+                // Idealne trafienie (synchronizacja + ten sam czas trwania) - nie czekamy na resztę.
+                if let b = best, b.score >= 128 {
+                    group.cancelAll()
+                    break
+                }
+            }
+            return best
         }
-        return best
     }
 
     /// LRCLIB + NetEase + Kugou naraz, z uwzględnieniem włączonych w Ustawieniach.
@@ -199,12 +320,12 @@ actor LyricsService {
         return (await a) + (await b) + (await k)
     }
 
-    private func pick(_ results: [LyricsCandidate], guess: TitleCleaner.Guess, duration: Double) -> (score: Double, cand: LyricsCandidate)? {
+    nonisolated private func pick(_ results: [LyricsCandidate], guess: TitleCleaner.Guess, duration: Double) -> Scored? {
         scored(results, guess: guess, duration: duration).max(by: { $0.score < $1.score })
     }
 
-    private func scored(_ results: [LyricsCandidate], guess: TitleCleaner.Guess, duration: Double) -> [(score: Double, cand: LyricsCandidate)] {
-        var out: [(score: Double, cand: LyricsCandidate)] = []
+    nonisolated private func scored(_ results: [LyricsCandidate], guess: TitleCleaner.Guess, duration: Double) -> [Scored] {
+        var out: [Scored] = []
         for c in results {
             let titleSim = TitleCleaner.similarity(c.title, guess.title)
             if titleSim < 0.34 { continue }
@@ -224,28 +345,47 @@ actor LyricsService {
     }
 
     /// Kilka najlepszych wersji tekstu z synchronizacją (ze wszystkich źródeł) - rozstrzyga je potem słuchanie nagrania.
-    /// Wersje ze słowami są na początku, więc przy remisie wygrywają.
+    /// Wersje ze słowami są na początku, więc przy remisie wygrywają. Wszystko naraz (wcześniej po kolei).
     func candidates(for track: Track) async -> [LyricsCandidate] {
-        var all: [(score: Double, cand: LyricsCandidate)] = []
         let guesses = TitleCleaner.guesses(title: track.title, channel: track.artist)
         let prefs = LyricsSourcePrefs.current
+        let duration = track.duration
+
+        enum Part: Sendable {
+            case front([LyricsCandidate])
+            case scored([Scored])
+        }
 
         var front: [LyricsCandidate] = []
-        if !prefs.activeProviders.isEmpty, let g = guesses.first {
-            let results = await LyricsProviders.lookup(videoId: track.id, title: g.title, artist: g.artist,
-                                                      duration: track.duration, prefs: prefs, all: true)
-            let usable = results.filter { $0.hasTiming && $0.plausible(for: track.duration) }
-            let ordered = usable.filter { $0.hasWords } + usable.filter { !$0.hasWords }
-            front = ordered.prefix(3).map { LyricsCandidate(provider: $0, title: g.title, artist: g.artist) }
-        }
-
-        for g in guesses.prefix(3) {
-            let results = await lineSourceResults(g, duration: track.duration, neteaseLimit: 6, prefs: prefs)
-            all += scored(results, guess: g, duration: track.duration)
-        }
-        if let first = guesses.first, prefs.isEnabled("lrclib") {
-            let results = await lrclibSafe(["q": "\(first.artist) \(first.title)"])
-            all += scored(results, guess: first, duration: track.duration)
+        var all: [Scored] = []
+        await withTaskGroup(of: Part.self) { group in
+            if !prefs.activeProviders.isEmpty, let g = guesses.first {
+                group.addTask {
+                    let results = await LyricsProviders.lookup(videoId: track.id, title: g.title, artist: g.artist,
+                                                              duration: duration, prefs: prefs, all: true)
+                    let usable = results.filter { $0.hasTiming && $0.plausible(for: duration) }
+                    let ordered = usable.filter { $0.hasWords } + usable.filter { !$0.hasWords }
+                    return Part.front(ordered.prefix(3).map { LyricsCandidate(provider: $0, title: g.title, artist: g.artist) })
+                }
+            }
+            for g in guesses.prefix(3) {
+                group.addTask {
+                    let results = await self.lineSourceResults(g, duration: duration, neteaseLimit: 6, prefs: prefs)
+                    return Part.scored(self.scored(results, guess: g, duration: duration))
+                }
+            }
+            if let first = guesses.first, prefs.isEnabled("lrclib") {
+                group.addTask {
+                    let results = await self.lrclibSafe(["q": "\(first.artist) \(first.title)"])
+                    return Part.scored(self.scored(results, guess: first, duration: duration))
+                }
+            }
+            while let part = await group.next() {
+                switch part {
+                case .front(let f): front = f
+                case .scored(let s): all += s
+                }
+            }
         }
         var seen = Set<String>()
         var out: [LyricsCandidate] = []
@@ -288,10 +428,16 @@ actor LyricsService {
         var seen = Set<String>()
         for t in tracks where seen.insert(t.id).inserted {
             if Task.isCancelled { break }
-            if memory[t.id] != nil || readCache(t.id) != nil { continue }
+            if cached(t.id) != nil { continue }
             guard Reachability.shared.online else { break }
+            // Grająca piosenka ma pierwszeństwo: tło czeka, aż jej tekst się znajdzie.
+            var waited = 0
+            while foreground > 0, waited < 100 {
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                waited += 1
+            }
             _ = await lyrics(for: t)
-            try? await Task.sleep(nanoseconds: 300_000_000)
+            try? await Task.sleep(nanoseconds: 250_000_000)
         }
     }
 
@@ -431,7 +577,7 @@ actor LyricsService {
                     text = text.replacingOccurrences(of: "\u{FEFF}", with: "")
                     let cleaned = LyricsService.cleanCredits(text)
                     guard !LRCParser.parse(cleaned).isEmpty else { return nil }
-                    return LyricsCandidate(id: Int(id) ?? abs(id.hashValue % 1_000_000_000), trackName: c.song, artistName: c.singer,
+                    return LyricsCandidate(id: Int(id) ?? LyricsProviders.stableID(id), trackName: c.song, artistName: c.singer,
                                            albumName: nil, duration: c.duration.map { Double($0) / 1000 },
                                            instrumental: false, plainLyrics: nil, syncedLyrics: cleaned, source: "Kugou")
                 }
@@ -454,7 +600,7 @@ actor LyricsService {
               let data = await getData("https://api.lyrics.ovh/v1/\(a)/\(t)"),
               let decoded = try? JSONDecoder().decode(OvhResponse.self, from: data),
               let text = decoded.lyrics?.trimmingCharacters(in: .whitespacesAndNewlines), text.count > 40 else { return nil }
-        return LyricsCandidate(id: abs((g.artist + g.title).hashValue % 1_000_000_000), trackName: g.title, artistName: g.artist,
+        return LyricsCandidate(id: LyricsProviders.stableID("ovh|" + g.artist + "|" + g.title), trackName: g.title, artistName: g.artist,
                                albumName: nil, duration: nil, instrumental: false,
                                plainLyrics: LRCParser.stripSpam(plain: text), syncedLyrics: nil, source: "lyrics.ovh")
     }

@@ -9,6 +9,7 @@ struct SettingsView: View {
     @State private var showGuide = false
     @State private var pickerItem: PhotosPickerItem? = nil
     @State private var confirmDelete = false
+    @State private var confirmLyricsReset = false
 
     private var rowBackground: Color { ink.opacity(0.09) }
 
@@ -19,6 +20,7 @@ struct SettingsView: View {
                 helpSection
                 backgroundSection
                 colorsSection
+                lyricsSection
                 censorSection
                 extrasSection
                 storageSection
@@ -51,6 +53,19 @@ struct SettingsView: View {
             Button("Anuluj", role: .cancel) {}
         } message: {
             Text("Playlisty zostaną. Piosenki pobiorą się ponownie przy następnym odtworzeniu.")
+        }
+        .confirmationDialog("Usunąć zapisane teksty piosenek?", isPresented: $confirmLyricsReset, titleVisibility: .visible) {
+            Button("Usuń teksty", role: .destructive) {
+                Task {
+                    await LyricsService.shared.clearCache()
+                    LyricsWarpStore.removeAll()
+                    if let t = engine.currentTrack, !t.isRadio { engine.refreshLyrics() }
+                    toast.show("Teksty pobiorą się od nowa")
+                }
+            }
+            Button("Anuluj", role: .cancel) {}
+        } message: {
+            Text("Przydaje się, gdy teksty są złe albo przesunięte. Pobiorą się od nowa przy następnym odtworzeniu.")
         }
     }
 
@@ -157,6 +172,27 @@ struct SettingsView: View {
         .listRowBackground(rowBackground)
     }
 
+    private var lyricsSection: some View {
+        Section {
+            Toggle("Animacja liter (karaoke)", isOn: $settings.data.karaokeLyrics.animation())
+            if settings.data.karaokeLyrics {
+                Toggle("Fala liter także bez czasów słów", isOn: $settings.data.karaokeLineSync)
+            }
+            Toggle("Rozmycie dalszych linijek", isOn: $settings.data.blurInactiveLyrics)
+            VStack(alignment: .leading) {
+                Text("Rozmiar tekstu: \(Int(settings.data.lyricsFontSize))")
+                Slider(value: $settings.data.lyricsFontSize, in: 22...46, step: 1)
+            }
+            Button("Usuń zapisane teksty") { confirmLyricsReset = true }
+        } header: {
+            Text("Teksty piosenek")
+        } footer: {
+            Text("Litery zapalają się dokładnie wtedy, gdy są śpiewane (iOS 18 i nowszy). Gdy źródło zna tylko czas całej linijki, czas liter jest szacowany. Tekst możesz przewijać palcem - po chwili sam wraca do śpiewanej linijki. Usunięte teksty pobiorą się od nowa przy następnym odtworzeniu.")
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .listRowBackground(rowBackground)
+    }
+
     private var censorSection: some View {
         Section {
             Toggle("Cenzura przekleństw", isOn: $settings.data.censorProfanity)
@@ -182,15 +218,11 @@ struct SettingsView: View {
                 ForEach(SettingsView.languages, id: \.code) { Text($0.name).tag($0.code) }
             }
             VStack(alignment: .leading) {
-                Text("Rozmiar tekstu: \(Int(settings.data.lyricsFontSize))")
-                Slider(value: $settings.data.lyricsFontSize, in: 22...46, step: 1)
-            }
-            VStack(alignment: .leading) {
                 Text("Tempo animacji tła: \(String(format: "%.2f", settings.data.bgSpeed))×")
                 Slider(value: $settings.data.bgSpeed, in: 0.5...3, step: 0.25)
             }
         } header: {
-            Text("Teksty i wygląd")
+            Text("Tłumaczenie i wygląd")
         } footer: {
             Text("Tempo tła zmienia się po ponownym otwarciu ekranu odtwarzacza.")
         }

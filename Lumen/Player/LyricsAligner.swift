@@ -256,4 +256,10 @@ enum LyricsWarpStore {
     static func markTried(_ id: String) { save(id, uid: "", anchors: []) }
 
     static func remove(_ id: String) { try? FileManager.default.removeItem(at: url(id)) }
+
+    /// Usuwa wszystkie mapy czasu (np. razem z zapisanymi tekstami).
+    static func removeAll() {
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        for f in files { try? FileManager.default.removeItem(at: f) }
+    }
 }

@@ -137,7 +137,7 @@ private extension String {
 }
 
 enum TitleCleaner {
-    struct Guess: Equatable {
+    struct Guess: Equatable, Sendable {
         let artist: String
         let title: String
     }

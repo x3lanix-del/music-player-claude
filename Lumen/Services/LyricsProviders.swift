@@ -10,7 +10,7 @@ import Foundation
 
 // MARK: - Źródła i ustawienia
 
-enum LyricsSourceID: String, CaseIterable, Codable, Identifiable {
+enum LyricsSourceID: String, CaseIterable, Codable, Identifiable, Sendable {
     case lrcRed, biniLyrics, betterLyrics, betterLyricsPortato, lyricsPlus, unison, simpMusic
 
     var id: String { rawValue }
@@ -53,7 +53,7 @@ enum LyricsLineSource {
 }
 
 /// Wybór źródeł (kolejność + włączone). Zapisany w UserDefaults, więc czytelny z każdego wątku.
-struct LyricsSourcePrefs: Codable, Equatable {
+struct LyricsSourcePrefs: Codable, Equatable, Sendable {
     var order: [LyricsSourceID] = LyricsSourceID.allCases
     var disabled: Set<String> = Set(LyricsSourceID.allCases.filter { !$0.enabledByDefault }.map { $0.rawValue })
 
@@ -115,7 +115,7 @@ final class LyricsSourcePrefsStore: ObservableObject {
 
 // MARK: - Wynik źródła
 
-struct ProviderResult {
+struct ProviderResult: Sendable {
     let source: LyricsSourceID
     let lines: [LyricLine]
     var isrc: String? = nil
@@ -693,7 +693,7 @@ enum ProviderParse {
 // MARK: - Źródła
 
 enum LyricsProviders {
-    struct Query {
+    struct Query: Sendable {
         let videoId: String
         let title: String
         let artist: String
@@ -701,7 +701,7 @@ enum LyricsProviders {
         let seconds: Int
     }
 
-    struct BiniHit {
+    struct BiniHit: Sendable {
         let isrc: String?
         let lyricsUrl: String?
         let duration: Double?
@@ -717,8 +717,8 @@ enum LyricsProviders {
     // MARK: Wspólne wywołanie
 
     /// Pyta włączone źródła naraz; odpowiedzi bierze w kolejności ustawionej przez użytkownika. `all == false`:
-    /// kończy, gdy źródło o najwyższym priorytecie z czasami słów jest znane (nie czeka na wolniejsze za nim).
-    /// `all == true`: czeka na wszystkie (do ok. 9 s) - do wyboru wersji.
+    /// kończy, gdy źródło o najwyższym priorytecie z czasami słów jest znane - a gdy jakieś słowa już są, na ważniejsze
+    /// (wolniejsze) źródła czeka najwyżej chwilę, zamiast do limitu czasu. `all == true`: czeka na wszystkie (do ok. 9 s).
     static func lookup(videoId: String, title: String, artist: String, duration: Double,
                        prefs: LyricsSourcePrefs, all: Bool) async -> [ProviderResult] {
         let sequence = prefs.activeProviders
@@ -729,23 +729,36 @@ enum LyricsProviders {
                       album: nil,
                       seconds: duration > 0 ? Int(duration.rounded()) : 0)
 
-        // Najpierw: które to nagranie (ISRC). Krótko, bo bez tego wszystko i tak działa po nazwie.
-        var hit: BiniHit? = nil
-        if sequence.contains(.biniLyrics) {
-            hit = await withTimeout(2.5) { await biniIdentify(q, isrc: nil) }
+        // Które to nagranie (ISRC) - krótko i równolegle. Czekają na to tylko źródła, które z niego korzystają
+        // (wcześniej wszystkie źródła startowały dopiero po tym kroku, co dokładało do 2,5 s do każdego tekstu).
+        let wantsISRC = sequence.contains(.biniLyrics) || sequence.contains(.lrcRed) || sequence.contains(.lyricsPlus)
+        let identify = Task<BiniHit?, Never> {
+            guard wantsISRC else { return nil }
+            return await withTimeout(2.5) { await biniIdentify(q, isrc: nil) }
         }
-        let isrc = hit?.isrc
-        let knownHit = hit
+        defer { identify.cancel() }
+
+        func knownHit() async -> BiniHit? {
+            await withTaskCancellationHandler {
+                await identify.value
+            } onCancel: {
+                identify.cancel()
+            }
+        }
 
         func run(_ source: LyricsSourceID) async -> ProviderResult? {
             var lines: [LyricLine]? = nil
+            var isrc: String? = nil
             switch source {
             case .lrcRed:
+                isrc = await knownHit()?.isrc
                 lines = await lrcRed(q, isrc: isrc)
             case .biniLyrics:
-                if let h = knownHit {
+                let first = await knownHit()
+                isrc = first?.isrc
+                if let h = first {
                     lines = await biniLyrics(h)
-                } else if let h = await biniIdentify(q, isrc: nil) {
+                } else if !Task.isCancelled, let h = await biniIdentify(q, isrc: nil) {
                     lines = await biniLyrics(h)
                 }
             case .betterLyrics:
@@ -753,6 +766,7 @@ enum LyricsProviders {
             case .betterLyricsPortato:
                 lines = await betterLyrics(q, portato: true)
             case .lyricsPlus:
+                isrc = await knownHit()?.isrc
                 lines = await lyricsPlus(q, isrc: isrc)
             case .unison:
                 lines = await unison(q)
@@ -763,30 +777,60 @@ enum LyricsProviders {
             return ProviderResult(source: source, lines: found, isrc: isrc, duration: nil)
         }
 
+        /// Wynik nadaje się na zwycięzcę: ma czasy słów i pasuje długością do filmu (inaczej to inne nagranie).
+        func good(_ r: ProviderResult?) -> Bool {
+            guard let r = r else { return false }
+            return r.hasWords && r.hasTiming && r.plausible(for: duration)
+        }
+
         return await withTaskGroup(of: (Int, ProviderResult?).self, returning: [ProviderResult].self) { group in
             for (i, source) in sequence.enumerated() {
                 group.addTask { (i, await run(source)) }
             }
             group.addTask {
-                try? await Task.sleep(nanoseconds: 9_000_000_000)
+                try? await Task.sleep(nanoseconds: all ? 9_000_000_000 : 7_000_000_000)
                 return (-1, nil)
             }
             var results = [ProviderResult?](repeating: nil, count: sequence.count)
             var finished = [Bool](repeating: false, count: sequence.count)
             var winner: ProviderResult? = nil
-            for await (i, result) in group {
-                if i < 0 { break }
+            var graceStarted = false
+
+            /// Najważniejsze (wg kolejności) źródło, które już odpowiedziało dobrym tekstem.
+            func bestFinished() -> ProviderResult? {
+                for k in sequence.indices where finished[k] && good(results[k]) { return results[k] }
+                return nil
+            }
+
+            while let item = await group.next() {
+                let (i, result) = item
+                if i == -1 { break }                       // całkowity limit czasu
+                if i == -2 {                               // minęło okno łaski: bierzemy najlepsze, co już jest
+                    if let b = bestFinished() { winner = b; break }
+                    continue
+                }
                 finished[i] = true
                 results[i] = result
+                if finished.allSatisfy({ $0 }) { break }
                 if all { continue }
+                // Wszystkie ważniejsze źródła już odpowiedziały, a to ma słowa: pewny zwycięzca.
                 var k = 0
                 while k < finished.count && finished[k] {
-                    if let r = results[k], r.hasWords { winner = r; break }
+                    if good(results[k]) { winner = results[k]; break }
                     k += 1
                 }
                 if winner != nil { break }
+                // Jest już tekst ze słowami, ale ważniejsze źródło jeszcze szuka: czekamy na nie najwyżej 1,2 s.
+                if !graceStarted, good(result) {
+                    graceStarted = true
+                    group.addTask {
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        return (-2, nil)
+                    }
+                }
             }
             group.cancelAll()
+            if !all, winner == nil { winner = bestFinished() }
             if let w = winner { return [w] }
             return results.compactMap { $0 }
         }

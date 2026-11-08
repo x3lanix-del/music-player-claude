@@ -75,6 +75,12 @@ struct SettingsData: Codable, Equatable {
     var keepPitch: Bool = true
     var bannerMotion: Bool = true
 
+    // Teksty 1.29
+    /// Aktywna linijka zapala się litera po literze (karaoke).
+    var karaokeLyrics: Bool = true
+    /// Fala liter także przy tekstach, które mają tylko czasy linijek (czas liter jest wtedy szacowany).
+    var karaokeLineSync: Bool = true
+
     // Kolory (pusty = automatycznie, zależnie od tła)
     var inkHex: String = ""
     var accentHex: String = ""
@@ -113,6 +119,8 @@ struct SettingsData: Codable, Equatable {
         playbackRate = (try? c.decode(Double.self, forKey: .playbackRate)) ?? 1
         keepPitch = (try? c.decode(Bool.self, forKey: .keepPitch)) ?? true
         bannerMotion = (try? c.decode(Bool.self, forKey: .bannerMotion)) ?? true
+        karaokeLyrics = (try? c.decode(Bool.self, forKey: .karaokeLyrics)) ?? true
+        karaokeLineSync = (try? c.decode(Bool.self, forKey: .karaokeLineSync)) ?? true
         inkHex = (try? c.decode(String.self, forKey: .inkHex)) ?? ""
         accentHex = (try? c.decode(String.self, forKey: .accentHex)) ?? ""
         lyricsHex = (try? c.decode(String.self, forKey: .lyricsHex)) ?? ""

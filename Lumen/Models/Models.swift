@@ -1,6 +1,6 @@
 import Foundation
 
-struct Track: Identifiable, Codable, Hashable {
+struct Track: Identifiable, Codable, Hashable, Sendable {
     var id: String          // YouTube video id
     var title: String
     var artist: String
@@ -47,13 +47,13 @@ enum Fmt {
 
 /// Jeden kawałek linijki z własnym czasem: słowo albo sylaba (np. "e" + "nough"). `text` jest zapisany tak, jak
 /// przyszedł ze źródła - spacja na końcu oznacza koniec słowa, jej brak = ciąg dalszy tego samego słowa.
-struct LyricRun: Equatable, Hashable {
+struct LyricRun: Equatable, Hashable, Sendable {
     var start: Double
     var end: Double
     var text: String
 }
 
-struct LyricLine: Identifiable, Equatable {
+struct LyricLine: Identifiable, Equatable, Sendable {
     let id: Int
     let time: Double
     let text: String

@@ -141,6 +141,7 @@ struct MiniPlayerBar: View {
     @Environment(\.ink) private var ink
     @EnvironmentObject var engine: PlayerEngine
     let open: () -> Void
+    @State private var nextTaps = 0
 
     var body: some View {
         if let t = engine.currentTrack {
@@ -160,6 +161,10 @@ struct MiniPlayerBar: View {
                              : t.artist)
                             .font(.system(size: 12)).foregroundStyle(ink.opacity(0.65)).lineLimit(1)
                     }
+                    // Nowa piosenka wjeżdża od dołu, poprzednia znika.
+                    .id(t.id)
+                    .transition(.asymmetric(insertion: .move(edge: .bottom).combined(with: .opacity),
+                                            removal: .opacity))
                     Spacer(minLength: 0)
                 }
                 .contentShape(Rectangle())
@@ -169,25 +174,59 @@ struct MiniPlayerBar: View {
                     Image(systemName: engine.wantsPlaying ? "pause.fill" : "play.fill")
                         .font(.system(size: 20, weight: .bold))
                         .foregroundStyle(ink)
+                        .contentTransition(.symbolEffect(.replace))
                         .frame(width: 48, height: 48)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressScaleStyle())
+                .animation(.snappy(duration: 0.25), value: engine.wantsPlaying)
 
-                Button { engine.next() } label: {
+                Button {
+                    nextTaps += 1
+                    engine.next()
+                } label: {
                     Image(systemName: "forward.fill")
                         .font(.system(size: 18, weight: .bold))
                         .foregroundStyle(ink)
+                        .symbolEffect(.bounce, value: nextTaps)
                         .frame(width: 48, height: 48)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(PressScaleStyle())
             }
             .padding(.leading, 10)
             .padding(.trailing, 8)
             .padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
+                if !t.isRadio {
+                    MiniProgress(clock: engine.clock)
+                        .padding(.horizontal, 22)
+                        .padding(.bottom, 3)
+                }
+            }
             .glass(RoundedRectangle(cornerRadius: 28, style: .continuous))
+            .animation(.smooth(duration: 0.45), value: t.id)
         }
+    }
+}
+
+/// Cienki pasek postępu piosenki na dole mini-odtwarzacza (osobny widok, żeby tykanie zegara nie
+/// przerysowywało całego paska).
+private struct MiniProgress: View {
+    @Environment(\.ink) private var ink
+    @ObservedObject var clock: PlaybackClock
+
+    var body: some View {
+        GeometryReader { geo in
+            let f = clock.duration > 0 ? min(max(clock.time / clock.duration, 0), 1) : 0
+            ZStack(alignment: .leading) {
+                Capsule().fill(ink.opacity(0.12))
+                Capsule().fill(ink.opacity(0.55))
+                    .frame(width: geo.size.width * CGFloat(f))
+            }
+        }
+        .frame(height: 2.5)
+        .allowsHitTesting(false)
     }
 }
 

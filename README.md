@@ -1,3 +1,40 @@
+## 1.29.0 - idealne teksty
+**Teksty szybciej**
+- Wszystkie źródła tekstów i wszystkie warianty tytułu są pytane naraz (wcześniej po kolei), a większość źródeł
+  ze słowami nie czeka już na rozpoznanie nagrania (ISRC) - startują od razu (czekają tylko te, które go używają).
+- Tekst z czasem linijek pokazuje się od razu, gdy tylko jest gotowy, a wersja słowo po słowie podmienia go sama,
+  gdy przyjdzie (mała plakietka „Szukam wersji słowo po słowie”).
+- Gdy jest już tekst ze słowami, aplikacja czeka na ważniejsze (wolniejsze) źródło najwyżej 1,2 s, a nie do limitu czasu.
+- Ta sama piosenka nie jest szukana dwa razy jednocześnie (np. pobieranie z wyprzedzeniem + odtwarzanie), a teksty
+  całej biblioteki pobierane w tle ustępują miejsca piosence, która właśnie gra.
+- „Nie znaleziono tekstu” pojawia się szybciej: ponowne szukanie tylko po błędzie sieci (wcześniej każde szukanie szło 2-4 razy).
+
+**Teksty ładniej**
+- Prawdziwe karaoke (iOS 18+): litery aktywnej linijki zapalają się dokładnie wtedy, gdy są śpiewane, miękką falą
+  z lekkim uniesieniem. Przy tekstach z samym czasem linijek fala idzie w tempie śpiewu (można wyłączyć).
+- Przerwy instrumentalne i intro: trzy kropki zapalają się po kolei i „oddychają”, a pod koniec przerwy znikają.
+- Rozmycie dalszych linijek (przełącznik w Ustawieniach), płynniejsze przejścia między linijkami.
+- Tekst można przewijać palcem - wtedy nie ucieka ani się nie rozmywa, a po chwili sam wraca do śpiewanej linijki
+  (albo od razu przyciskiem „Wróć do śpiewanej linijki”).
+- Zamiast kółka ładowania: migające „linijki”. Na końcu tekstu: skąd jest tekst.
+- Linijka zmienia się bliżej początku śpiewu (zegar odtwarzacza tyka co 0,1 s - teraz z wyrównaniem).
+
+**Nowe**
+- Menu „•••” → **Tekst piosenki**: inna wersja tekstu, tekst wcześniej / później o 0,25 s, przywróć oryginalne czasy,
+  szukaj tekstu od nowa. Przy „Nie znaleziono tekstu” jest przycisk „Szukaj jeszcze raz”.
+- Menu „•••” → **Wyłącznik czasowy**: 15 / 30 / 45 / 60 / 90 min albo „po tej piosence” - muzyka łagodnie cichnie i staje.
+- Ustawienia → Teksty piosenek: animacja liter, fala bez czasów słów, rozmycie, rozmiar tekstu, „Usuń zapisane teksty”.
+- Animacje: przycisk play/pauza płynnie zmienia ikonę, przyciski sprężyście reagują na dotyk, serce podskakuje,
+  mini-odtwarzacz ma pasek postępu i animowaną zmianę piosenki, grająca piosenka na liście ma falującą ikonę.
+
+**Poprawki błędów**
+- Ręcznie wybrana wersja tekstu nie jest już nadpisywana przez kończące się w tle wyszukiwanie.
+- Dopasowanie tekstu ze słuchu nie podmienia już tekstu słowo po słowie gorszą wersją z linijkami.
+- Po zmianie wersji tekstu nie zostaje stara mapa czasu ani stare fragmenty do wyciszenia przekleństw.
+- Tłumaczenie tekstu nie pokazuje już tłumaczenia innej wersji tekstu tej samej piosenki.
+- Źródło ze słowami, które pasowało do innego nagrania (inna długość), nie blokuje już lepszych źródeł.
+- Stałe identyfikatory tekstów z Kugou i lyrics.ovh (wcześniej zmieniały się przy każdym uruchomieniu).
+
 ## 1.26.0
 - Playlisty: jeden przycisk "Opublikuj…" (publicznie albo prywatnie - tylko z linkiem), link w formie .../1, przycisk "Udostępnij playlistę", Biblioteka playlist (Biblioteka → + → Biblioteka playlist).
 

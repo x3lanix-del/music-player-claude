@@ -131,9 +131,12 @@ struct TrackRow: View {
                     VStack(alignment: .leading, spacing: 3) {
                         HStack(spacing: 6) {
                             if isCurrent {
-                                Image(systemName: "speaker.wave.2.fill")
+                                // Grająca piosenka: "fala" faluje, gdy muzyka gra.
+                                Image(systemName: "waveform")
                                     .font(.system(size: 12, weight: .semibold))
                                     .foregroundStyle(ink)
+                                    .symbolEffect(.variableColor.iterative, isActive: engine.isPlaying)
+                                    .transition(.scale.combined(with: .opacity))
                             }
                             Text(track.title)
                                 .font(.system(size: 16, weight: .semibold))

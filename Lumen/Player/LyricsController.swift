@@ -33,7 +33,7 @@ final class LyricsController: ObservableObject {
     /// player clock (Bluetooth: ~0.2 s), so the lyrics are held back by the same amount.
     private var latency: Double = 0
 
-    func load(track: Track, offset: Double, stretch: Double = 1) {
+    func load(track: Track, offset: Double, stretch: Double = 1, fresh: Bool = false) {
         trackID = track.id
         revision += 1
         self.offset = offset
@@ -41,6 +41,7 @@ final class LyricsController: ObservableObject {
         current = nil
         loadTask?.cancel()
         phase = .loading
+        isUpgrading = false
         muteWindows = []
         heardWindows = []
         lyricWindows = []
@@ -49,23 +50,33 @@ final class LyricsController: ObservableObject {
         plainText = ""
         activeIndex = -1
         loadTask = Task { [weak self] in
+            // "Szukaj od nowa": zapomnij zapisaną wersję, zanim zaczniemy szukać.
+            if fresh { await LyricsService.shared.forget(track.id) }
             var notFoundRetries = 0
             while true {
-                let found = await LyricsService.shared.lyrics(for: track)
+                // Tekst z czasem linijek pokazujemy od razu, gdy jest gotowy; wersja słowo po słowie podmieni go sama.
+                let interim: LyricsService.Interim = { [weak self] candidate in
+                    await self?.applyInterim(candidate, trackID: track.id)
+                }
+                let found = await LyricsService.shared.lyrics(for: track, foreground: true, interim: interim)
                 guard let self = self, !Task.isCancelled, self.trackID == track.id else { return }
+                self.isUpgrading = false
                 if case .offline = found.result {
                     // Brak internetu: pokaż komunikat i próbuj dalej, aż połączenie wróci (bez klikania).
-                    self.apply(.offline)
+                    if self.phase != .synced { self.apply(.offline) }
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     continue
                 }
                 if case .notFound = found.result, notFoundRetries < 1, Reachability.shared.online {
                     // Fałszywe "brak tekstu" bywa chwilowe (timeout serwera) - spróbuj jeszcze raz po chwili.
                     notFoundRetries += 1
-                    try? await Task.sleep(nanoseconds: 1_200_000_000)
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
                     continue
                 }
+                // Ta sama wersja, którą już pokazaliśmy tymczasowo: nic nie przeładowujemy (bez mrugnięcia).
+                if let c = found.candidate, c.uid == self.current?.uid, self.phase == .synced { return }
                 self.current = found.candidate
+                self.warp = []
                 if let c = found.candidate, let stored = LyricsWarpStore.load(track.id), stored.uid == c.uid {
                     self.warp = stored.anchors
                 }
@@ -78,12 +89,34 @@ final class LyricsController: ObservableObject {
         }
     }
 
+    /// True, gdy widać tymczasowy tekst z czasem linijek, a w tle trwa jeszcze szukanie wersji słowo po słowie.
+    @Published private(set) var isUpgrading = false
+
+    /// Wersja tymczasowa (z czasem linijek) - pokazywana tylko, gdy nic lepszego jeszcze nie ma.
+    private func applyInterim(_ candidate: LyricsCandidate, trackID id: String) {
+        guard trackID == id, phase == .loading || phase == .offline || phase == .idle else { return }
+        let result = LyricsService.result(from: candidate)
+        guard case .synced = result else { return }
+        current = candidate
+        warp = []
+        if let stored = LyricsWarpStore.load(id), stored.uid == candidate.uid { warp = stored.anchors }
+        isUpgrading = true
+        apply(result)
+    }
+
+    /// Szuka tekstu od nowa (zapomina zapisaną wersję) - gdy pokazany tekst jest zły albo go nie było.
+    func reload(track: Track) {
+        LyricsWarpStore.remove(track.id)
+        load(track: track, offset: 0, stretch: 1, fresh: true)
+    }
+
     /// Czyści tekst (np. przy zmianie stacji radiowej, zanim pojawi się nowy utwór).
     func clear() {
         loadTask?.cancel()
         loadTask = nil
         trackID = nil
         revision += 1
+        isUpgrading = false
         phase = .idle
         lines = []
         plainText = ""
@@ -223,19 +256,31 @@ final class LyricsController: ObservableObject {
         muteWindows = out
     }
 
+    /// Pokazuje wybraną wersję od razu (bez czekania na zapis), więc to, co przyjdzie zaraz po niej
+    /// (np. mapa czasu z dopasowania), zawsze trafia już do nowej wersji.
     func choose(_ candidate: LyricsCandidate, for track: Track) {
-        Task { [weak self] in
-            await LyricsService.shared.choose(candidate, for: track.id)
-            guard let self = self, self.trackID == track.id else { return }
-            self.current = candidate
-            self.apply(LyricsService.result(from: candidate))
+        guard trackID == track.id else {
+            Task { await LyricsService.shared.choose(candidate, for: track.id) }
+            return
         }
+        loadTask?.cancel()
+        isUpgrading = false
+        current = candidate
+        warp = []
+        if let stored = LyricsWarpStore.load(track.id), stored.uid == candidate.uid, !stored.anchors.isEmpty {
+            warp = stored.anchors
+        }
+        apply(LyricsService.result(from: candidate))
+        if lines.contains(where: { $0.isWordSynced }) { warp = [] }
+        Task { await LyricsService.shared.choose(candidate, for: track.id) }
     }
 
     func tick(_ time: Double) {
         lastTime = time
         guard phase == .synced else { return }
-        let idx = LRCParser.activeIndex(in: lines, at: lyricTime(forPlayer: time))
+        // Zegar odtwarzacza tyka co 0,1 s - pół kroku zapasu sprawia, że linijka zmienia się średnio
+        // dokładnie wtedy, gdy zaczyna się śpiew (a nie do 0,1 s później).
+        let idx = LRCParser.activeIndex(in: lines, at: lyricTime(forPlayer: time) + 0.05)
         if idx != activeIndex { activeIndex = idx }
     }
 
@@ -250,11 +295,20 @@ final class LyricsController: ObservableObject {
             tick(lastTime)
         case .plain(let text):
             plainText = text
+            lines = []
+            activeIndex = -1
             phase = .plain
+            rebuildMuteWindows()
         case .instrumental:
+            lines = []
+            activeIndex = -1
             phase = .instrumental
+            rebuildMuteWindows()
         case .notFound:
+            lines = []
+            activeIndex = -1
             phase = .notFound
+            rebuildMuteWindows()
         case .offline:
             phase = .offline
         }

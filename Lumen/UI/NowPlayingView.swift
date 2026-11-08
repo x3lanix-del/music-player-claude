@@ -98,6 +98,8 @@ struct NowPlayingView: View {
     @State private var showLyricsPicker = false
     @State private var showAudioEditor = false
     @State private var showDevices = false
+    @State private var prevTaps = 0
+    @State private var nextTaps = 0
 
     private var isFav: Bool { engine.currentTrack.map { library.isFavorite($0) } ?? false }
 
@@ -242,6 +244,8 @@ struct NowPlayingView: View {
             Button { settings.data.translateLyrics.toggle() } label: {
                 Label(settings.data.translateLyrics ? "Wyłącz tłumaczenie tekstu" : "Tłumacz tekst", systemImage: "character.bubble")
             }
+            lyricsMenu
+            sleepMenu
             Button { showAudioEditor = true } label: { Label("Edytor dźwięku…", systemImage: "slider.horizontal.3") }
             Button { engine.skip(by: -10) } label: { Label("Cofnij 10 s", systemImage: "gobackward.10") }
             Button { engine.skip(by: 10) } label: { Label("Do przodu 10 s", systemImage: "goforward.10") }
@@ -259,11 +263,51 @@ struct NowPlayingView: View {
         }
     }
 
+    /// Wszystko o tekście w jednym podmenu: inna wersja, ręczne przesunięcie, szukanie od nowa.
+    private var lyricsMenu: some View {
+        Menu {
+            Button { showLyricsPicker = true } label: { Label("Wybierz inną wersję…", systemImage: "text.badge.checkmark") }
+            Button { engine.adjustLyricsOffset(by: 0.25) } label: { Label("Tekst wcześniej (0,25 s)", systemImage: "backward") }
+            Button { engine.adjustLyricsOffset(by: -0.25) } label: { Label("Tekst później (0,25 s)", systemImage: "forward") }
+            Button { engine.resetLyricsOffset() } label: { Label("Przywróć oryginalne czasy", systemImage: "clock.arrow.circlepath") }
+            Button { engine.refreshLyrics() } label: { Label("Szukaj tekstu od nowa", systemImage: "arrow.clockwise") }
+        } label: {
+            Label("Tekst piosenki", systemImage: "quote.bubble")
+        }
+    }
+
+    private var sleepActive: Bool { engine.sleepAt != nil || engine.sleepAfterTrack }
+
+    private var sleepTitle: String {
+        if let at = engine.sleepAt { return "Wyłącznik czasowy (do \(at.formatted(date: .omitted, time: .shortened)))" }
+        if engine.sleepAfterTrack { return "Wyłącznik czasowy (po piosence)" }
+        return "Wyłącznik czasowy"
+    }
+
+    /// Muzyka sama ścichnie i zatrzyma się po wybranym czasie (np. przy zasypianiu).
+    private var sleepMenu: some View {
+        Menu {
+            if sleepActive {
+                Button(role: .destructive) { engine.cancelSleepTimer() } label: { Label("Wyłącz", systemImage: "xmark") }
+            }
+            ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in
+                Button { engine.setSleepTimer(minutes: minutes) } label: { Label("\(minutes) min", systemImage: "timer") }
+            }
+            Button { engine.setSleepAfterTrack() } label: { Label("Po tej piosence", systemImage: "music.note") }
+        } label: {
+            Label(sleepTitle, systemImage: sleepActive ? "moon.zzz.fill" : "moon.zzz")
+        }
+    }
+
     private var controls: some View {
         HStack {
             Spacer()
-            Button { engine.previous() } label: {
+            Button {
+                prevTaps += 1
+                engine.previous()
+            } label: {
                 Image(systemName: "backward.fill").font(.system(size: 34)).foregroundStyle(ink)
+                    .symbolEffect(.bounce, value: prevTaps)
                     .frame(width: 70, height: 70)
                     .contentShape(Rectangle())
             }
@@ -275,20 +319,26 @@ struct NowPlayingView: View {
                     } else {
                         Image(systemName: engine.wantsPlaying ? "pause.fill" : "play.fill")
                             .font(.system(size: 50)).foregroundStyle(ink)
+                            .contentTransition(.symbolEffect(.replace))
                     }
                 }
                 .frame(width: 80, height: 80)
                 .contentShape(Rectangle())
+                .animation(.snappy(duration: 0.25), value: engine.wantsPlaying)
             }
             Spacer()
-            Button { engine.next() } label: {
+            Button {
+                nextTaps += 1
+                engine.next()
+            } label: {
                 Image(systemName: "forward.fill").font(.system(size: 34)).foregroundStyle(ink)
+                    .symbolEffect(.bounce, value: nextTaps)
                     .frame(width: 70, height: 70)
                     .contentShape(Rectangle())
             }
             Spacer()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressScaleStyle())
         .padding(.vertical, 4)
     }
 
@@ -298,12 +348,13 @@ struct NowPlayingView: View {
                 Image(systemName: showLyrics ? "quote.bubble.fill" : "quote.bubble")
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(ink)
+                    .contentTransition(.symbolEffect(.replace))
                     .frame(width: 52, height: 52)
                     .glass(Circle(), interactive: true)
                     .contentShape(Circle())
                     .overlay(Circle().stroke(accentInk.opacity(showLyrics ? 0.8 : 0), lineWidth: 1.5))
             }
-            .buttonStyle(.plain)
+            .buttonStyle(PressScaleStyle(scale: 0.9))
             Spacer()
             Button {
                 if let t = engine.currentTrack {
@@ -314,6 +365,9 @@ struct NowPlayingView: View {
                 Image(systemName: isFav ? "heart.fill" : "heart")
                     .font(.system(size: 19, weight: .semibold))
                     .foregroundStyle(isFav ? Color.red : ink)
+                    .contentTransition(.symbolEffect(.replace))
+                    .symbolEffect(.bounce, value: isFav)
+                    .animation(.snappy(duration: 0.3), value: isFav)
                     .frame(width: 52, height: 52)
                     .glass(Circle(), interactive: true)
                     .contentShape(Circle())
@@ -391,6 +445,18 @@ struct QueueSheet: View {
         case .all: return "Powtarzaj wszystko"
         case .one: return "Powtarzaj jedną"
         }
+    }
+}
+
+/// Przycisk lekko się zmniejsza pod palcem i sprężyście wraca (jak w aplikacjach Apple).
+struct PressScaleStyle: ButtonStyle {
+    var scale: CGFloat = 0.86
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1)
+            .opacity(configuration.isPressed ? 0.82 : 1)
+            .animation(.spring(response: 0.28, dampingFraction: 0.6), value: configuration.isPressed)
     }
 }
 

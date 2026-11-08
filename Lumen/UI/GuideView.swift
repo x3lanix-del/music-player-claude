@@ -24,7 +24,7 @@ struct GuideView: View {
              body: "Wejdź w zakładkę Biblioteka i kliknij przycisk +. Możesz utworzyć pustą playlistę albo wkleić link do playlisty lub piosenki, żeby ją zaimportować. Żeby dodać piosenkę do playlisty, kliknij trzy kropki obok niej i wybierz „Dodaj do playlisty”."),
         Page(id: 3, icon: "play.circle",
              title: "3. Odtwarzacz",
-             body: "Gdy gra piosenka, na dole pojawia się mały pasek. Kliknij go, żeby otworzyć duży odtwarzacz: tekst, pasek postępu, przyciski poprzedni i następny, losowo, powtarzanie i kolejka. Kliknij linijkę tekstu, żeby przeskoczyć do tego momentu."),
+             body: "Gdy gra piosenka, na dole pojawia się mały pasek. Kliknij go, żeby otworzyć duży odtwarzacz: tekst, pasek postępu, przyciski poprzedni i następny, losowo, powtarzanie i kolejka. Tekst zapala się słowo po słowie - kliknij linijkę, żeby przeskoczyć do tego momentu, albo przewiń go palcem (po chwili sam wróci). W menu „•••” znajdziesz Tekst piosenki (inna wersja, przesunięcie, szukanie od nowa) i Wyłącznik czasowy."),
         Page(id: 4, icon: "lock.iphone",
              title: "4. Muzyka w tle",
              body: "Możesz wyjść z aplikacji albo zablokować telefon, a muzyka będzie grać dalej. Pauzę, odtwarzanie i przewijanie znajdziesz na ekranie blokady lub w Centrum sterowania. Muzyka gra natywnie, tak jak w zwykłym odtwarzaczu, więc nie trzeba nic robić."),

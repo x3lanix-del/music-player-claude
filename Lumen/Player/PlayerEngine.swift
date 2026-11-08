@@ -213,6 +213,55 @@ final class PlayerEngine: ObservableObject {
         startWatchdog()
     }
 
+    // MARK: - Wyłącznik czasowy
+
+    /// Kiedy muzyka sama się zatrzyma (nil = wyłączony).
+    @Published private(set) var sleepAt: Date? = nil
+    /// Zatrzymanie po bieżącej piosence.
+    @Published private(set) var sleepAfterTrack = false
+    private var sleepFadeTask: Task<Void, Never>?
+
+    func setSleepTimer(minutes: Int) {
+        sleepFadeTask?.cancel()
+        sleepAfterTrack = false
+        sleepAt = minutes > 0 ? Date().addingTimeInterval(Double(minutes) * 60) : nil
+        toast.show(minutes > 0 ? "Muzyka zatrzyma się za \(minutes) min" : "Wyłącznik czasowy wyłączony")
+    }
+
+    func setSleepAfterTrack() {
+        sleepFadeTask?.cancel()
+        sleepAt = nil
+        sleepAfterTrack = true
+        toast.show("Muzyka zatrzyma się po tej piosence")
+    }
+
+    func cancelSleepTimer() {
+        sleepFadeTask?.cancel()
+        sleepAt = nil
+        sleepAfterTrack = false
+        toast.show("Wyłącznik czasowy wyłączony")
+    }
+
+    /// Wywoływane co sekundę (watchdog): gdy czas minął, muzyka cichnie przez kilka sekund i się zatrzymuje.
+    private func checkSleepTimer() {
+        guard let at = sleepAt, Date() >= at else { return }
+        sleepAt = nil
+        guard wantsPlaying else { return }
+        sleepFadeTask?.cancel()
+        sleepFadeTask = Task { [weak self] in
+            guard let self = self else { return }
+            let start = self.player.volume
+            for step in 1...24 {
+                try? await Task.sleep(nanoseconds: 160_000_000)
+                if Task.isCancelled || !self.wantsPlaying { self.player.volume = start; return }
+                self.player.volume = start * Float(24 - step) / 24
+            }
+            self.pause()
+            self.player.volume = start
+            self.toast.show("Dobranoc! Muzyka zatrzymana przez wyłącznik czasowy.")
+        }
+    }
+
     // MARK: - Public controls
 
     func play(_ tracks: [Track], startAt index: Int, shuffled: Bool = false) {
@@ -389,6 +438,8 @@ final class PlayerEngine: ObservableObject {
         let value = ((lyrics.offset + delta) * 1000).rounded() / 1000
         lyrics.setOffset(value)
         settings.setLyricsOffset(value, for: t.id)
+        let shown = String(format: "%+.2f s", value).replacingOccurrences(of: ".", with: ",")
+        toast.show(value == 0 ? "Tekst: oryginalny czas" : "Przesunięcie tekstu: \(shown)")
     }
 
     func resetLyricsOffset() {
@@ -424,6 +475,21 @@ final class PlayerEngine: ObservableObject {
             if let file = await AudioCache.shared.localURL(for: t.id) {
                 try? await Task.sleep(nanoseconds: 600_000_000)
                 self?.scheduleAutoAlign(track: t, file: file)
+            }
+        }
+    }
+
+    /// Szuka tekstu bieżącej piosenki od nowa (menu "•••" → Tekst piosenki → Szukaj tekstu od nowa).
+    func refreshLyrics() {
+        guard let t = currentTrack, !t.isRadio else { return }
+        settings.setLyricsOffset(0, for: t.id)
+        settings.setLyricsStretch(1, for: t.id)
+        settings.data.lyricsAligned[t.id] = nil
+        lyrics.reload(track: t)
+        toast.show("Szukam tekstu od nowa…")
+        Task { [weak self] in
+            if let file = await AudioCache.shared.localURL(for: t.id) {
+                self?.scheduleAutoAlign(track: t, file: file, force: true)
             }
         }
     }
@@ -469,7 +535,9 @@ final class PlayerEngine: ObservableObject {
             guard let self = self else { return }
             // poczekaj na tekst (max ~20 s)
             var waited = 0
-            while self.lyrics.phase == .loading || self.lyrics.phase == .idle || self.lyrics.phase == .offline {
+            // (też gdy widać tymczasowy tekst z linijkami, a wersja słowo po słowie jeszcze może przyjść)
+            while self.lyrics.phase == .loading || self.lyrics.phase == .idle || self.lyrics.phase == .offline
+                    || self.lyrics.isUpgrading {
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 // limit czasu dotyczy tylko zwykłego ładowania; przy braku internetu czekamy aż wróci
                 if self.lyrics.phase != .offline { waited += 1 }
@@ -496,7 +564,9 @@ final class PlayerEngine: ObservableObject {
             let pick = await Task.detached(priority: .utility) {
                 await LyricsAligner.choose(file: file, candidates: candidates, duration: duration)
             }.value
-            if Task.isCancelled { return }
+            if Task.isCancelled || self.currentTrack?.id != track.id { return }
+            // W międzyczasie przyszedł tekst słowo po słowie (dokładny) - nie podmieniamy go wersją z linijkami.
+            if self.lyrics.lines.contains(where: { $0.isWordSynced }) { return }
             guard let pick = pick else {
                 // Było z czym porównywać, ale nic nie pasuje: zapamiętaj, żeby nie słuchać w kółko.
                 if !candidates.isEmpty { LyricsWarpStore.markTried(track.id); self.settings.data.lyricsAligned[track.id] = false }
@@ -1001,6 +1071,16 @@ final class PlayerEngine: ObservableObject {
             startLoad(track: t, startAt: 0, forceRefresh: true)
             return
         }
+        if sleepAfterTrack {
+            // Wyłącznik czasowy "po tej piosence".
+            sleepAfterTrack = false
+            wantsPlaying = false
+            isPlaying = false
+            isBuffering = false
+            updateNowPlaying()
+            toast.show("Dobranoc! Muzyka zatrzymana po piosence.")
+            return
+        }
         if repeatMode == .one, currentTrack != nil {
             ended = false
             clock.time = 0
@@ -1096,6 +1176,7 @@ final class PlayerEngine: ObservableObject {
     }
 
     private func watchdogTick() {
+        checkSleepTimer()
         guard wantsPlaying, !interrupted, !ended, let t = currentTrack else { stalledTicks = 0; return }
         if isPlaying { stalledTicks = 0; reloadAttempts = 0; resolveTicks = 0; return }
         if stalledTicks < 0 { stalledTicks += 1; return }
