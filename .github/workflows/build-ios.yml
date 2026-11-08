@@ -1,0 +1,119 @@
+name: Build iOS from ZIP
+
+# Wrzuć do repo: ten plik jako .github/workflows/build-ios.yml oraz dowolny plik .zip z projektem
+# (np. "Music Player.zip"). Potem: Actions -> Build iOS from ZIP -> Run workflow.
+# Workflow rozpakowuje zip, generuje projekt (XcodeGen), buduje i wystawia MusicPlayer.ipa.
+
+on:
+  workflow_dispatch:
+  push:          # każdy push na dowolną gałąź odpala build, bez klikania Run workflow
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack ZIP
+        id: unpack
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Gdy w repo leży kilka zipów, bierzemy ten z najwyższym numerem buildu w project.yml
+          # (a przy remisie - najnowszy wg wersji w nazwie), żeby nigdy nie zbudować starej wersji.
+          ZIP=""; BEST=-1
+          while IFS= read -r f; do
+            B="$(unzip -p "$f" '*project.yml' 2>/dev/null | grep -E 'CURRENT_PROJECT_VERSION' | head -n 1 | tr -dc '0-9' || true)"
+            B="${B:-0}"
+            echo "  $f -> build $B"
+            if [ "$B" -ge "$BEST" ]; then BEST="$B"; ZIP="$f"; fi
+          done < <(find . -maxdepth 1 -name '*.zip' | sort -V)
+
+          if [ -n "$ZIP" ]; then
+            echo "ZIP: $ZIP (build $BEST)"
+            rm -rf _project && mkdir _project
+            unzip -q -o "$ZIP" -d _project
+            YML="$(find _project -name project.yml -not -path '*/__MACOSX/*' | head -n 1)"
+          else
+            # Brak .zip w repo: projekt leży wprost (odpakowany) - szukaj project.yml bez rozpakowywania.
+            echo "Brak .zip w repo - szukam już odpakowanego projektu."
+            YML="$(find . -maxdepth 2 -name project.yml -not -path '*/__MACOSX/*' -not -path './_project/*' | head -n 1)"
+          fi
+
+          if [ -z "$YML" ]; then echo "::error::Nie znalazłem project.yml - ani w zipie, ani w repo wprost"; exit 1; fi
+          echo "dir=$(dirname "$YML")" >> "$GITHUB_OUTPUT"
+
+      - name: Select newest Xcode 26
+        shell: bash
+        run: |
+          XC="$(ls -d /Applications/Xcode_26*.app 2>/dev/null | grep -E 'Xcode_26(\.[0-9]+){0,2}\.app$' | sort -V | tail -n 1 || true)"
+          if [ -n "$XC" ]; then sudo xcode-select -s "$XC/Contents/Developer"; fi
+          xcodebuild -version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        working-directory: ${{ steps.unpack.outputs.dir }}
+        run: xcodegen generate
+
+      - name: Build (unsigned)
+        working-directory: ${{ steps.unpack.outputs.dir }}
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+        shell: bash
+        run: |
+          set -o pipefail
+          EXTRA=""
+          if [ -n "${YOUTUBE_API_KEY}" ]; then EXTRA="YOUTUBE_API_KEY=${YOUTUBE_API_KEY}"; fi
+          PROJ="$(ls -d *.xcodeproj | head -n 1)"
+          SCHEME="${PROJ%.xcodeproj}"
+          xcodebuild build \
+            -project "$PROJ" -scheme "$SCHEME" \
+            -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            $EXTRA 2>&1 | tee xcodebuild.log | tail -n 150
+
+      - name: Package IPA
+        id: pack
+        working-directory: ${{ steps.unpack.outputs.dir }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APP="$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -n 1)"
+          test -d "$APP"
+          NAME="$(basename "$APP" .app)"
+          rm -rf Payload && mkdir Payload
+          cp -R "$APP" Payload/
+          zip -qry "$NAME.ipa" Payload
+          echo "ipa=${{ steps.unpack.outputs.dir }}/$NAME.ipa" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ipa
+          path: ${{ steps.pack.outputs.ipa }}
+          if-no-files-found: error
+
+      - name: Release with IPA
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "build-${{ github.run_number }}" "${{ steps.pack.outputs.ipa }}" \
+            --repo "${{ github.repository }}" \
+            --title "Build ${{ github.run_number }}" \
+            --notes "Niepodpisany IPA - podpisz go swoim narzędziem."
+
+      - name: Upload log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: xcodebuild-log
+          path: ${{ steps.unpack.outputs.dir }}/xcodebuild.log
+          if-no-files-found: ignore
