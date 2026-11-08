@@ -8,6 +8,9 @@ final class ArtworkLoader {
     private let cache = NSCache<NSString, UIImage>()
     private static let ciContext = CIContext(options: nil)
 
+    /// Okładka z pamięci (bez czekania i bez sieci) - np. dla piosenki, która właśnie odjeżdża w animacji.
+    func cached(_ id: String) -> UIImage? { cache.object(forKey: id as NSString) }
+
     /// Square, center-cropped artwork for a video id (best quality that exists).
     func artwork(for id: String) async -> UIImage? {
         if let hit = cache.object(forKey: id as NSString) { return hit }

@@ -234,12 +234,15 @@ struct ArtworkView: View {
     @EnvironmentObject var engine: PlayerEngine
     var size: CGFloat
     var radius: CGFloat
+    /// Okładka tej konkretnej piosenki (np. tej, która odjeżdża w animacji przejścia). nil = piosenka, która gra.
+    var track: Track? = nil
 
     var body: some View {
+        let shown = track ?? engine.currentTrack
         Group {
-            if let img = engine.artwork {
+            if let t = shown, let img = image(for: t) {
                 Image(uiImage: img).resizable().scaledToFill()
-            } else if let t = engine.currentTrack {
+            } else if let t = shown {
                 TrackThumb(track: t, size: size)
             } else {
                 Rectangle().fill(ink.opacity(0.12))
@@ -247,5 +250,12 @@ struct ArtworkView: View {
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+
+    /// Duża okładka: ta z odtwarzacza, gdy należy do tej piosenki, albo od razu z pamięci (bez mignięcia miniaturką).
+    private func image(for t: Track) -> UIImage? {
+        if engine.artworkTrackID == t.id, let img = engine.artwork { return img }
+        if t.isRadio { return engine.currentTrack?.id == t.id ? engine.artwork : nil }
+        return ArtworkLoader.shared.cached(t.id)
     }
 }

@@ -90,8 +90,10 @@ struct NowPlayingView: View {
     @EnvironmentObject var toast: ToastCenter
     @EnvironmentObject var volume: VolumeController
     @State private var showLyrics = true
-    /// Identyfikator piosenki pokazanej w widoku - zmiana (w withAnimation) uruchamia animację przełączenia.
-    @State private var shownTrackID: String = ""
+    /// Piosenka pokazana w nagłówku - zmiana (w withAnimation) uruchamia animację przełączenia. Odjeżdżająca
+    /// piosenka zachowuje swój tytuł i okładkę do końca animacji.
+    @State private var shownTrack: Track? = nil
+    @State private var shownIndex = 0
     @State private var forward = true
     @State private var showQueue = false
     @State private var showAddToPlaylist = false
@@ -137,15 +139,18 @@ struct NowPlayingView: View {
             t.disablesAnimations = true
             withTransaction(t) {
                 showLyrics = true
-                shownTrackID = engine.currentTrack?.id ?? ""
+                shownTrack = engine.currentTrack
+                shownIndex = engine.currentIndex ?? 0
             }
         }
-        .onChange(of: engine.currentIndex) { old, new in
-            forward = (new ?? 0) >= (old ?? 0)     // kierunek animacji: następna z prawej, poprzednia z lewej
-        }
-        .onChange(of: engine.currentTrack?.id) { _, new in
+        .onChange(of: engine.currentTrack?.id) { _, _ in
             showLyrics = true
-            withAnimation(.smooth(duration: 0.55)) { shownTrackID = new ?? "" }
+            // Kierunek liczony tu (a nie w osobnym onChange), żeby zawsze był gotowy przed startem animacji:
+            // następna z prawej, poprzednia z lewej.
+            let index = engine.currentIndex ?? 0
+            forward = index >= shownIndex
+            shownIndex = index
+            withAnimation(.smooth(duration: 0.4)) { shownTrack = engine.currentTrack }
         }
         .sheet(isPresented: $showQueue) {
             QueueSheet()
@@ -184,33 +189,39 @@ struct NowPlayingView: View {
     /// Okładka i tytuł wjeżdżają z boku (następna piosenka z prawej, poprzednia z lewej) i wygaszają poprzednią.
     private var slide: AnyTransition {
         // Delikatne przesunięcie (nie przez cały ekran) + zanikanie i lekka skala: znacznie spokojniejsze niż wjazd z krawędzi.
-        let dx: CGFloat = forward ? 44 : -44
+        let dx: CGFloat = forward ? 30 : -30
         return .asymmetric(
-            insertion: .modifier(active: SlideFade(x: dx, scale: 0.94, opacity: 0), identity: SlideFade(x: 0, scale: 1, opacity: 1)),
-            removal: .modifier(active: SlideFade(x: -dx, scale: 0.94, opacity: 0), identity: SlideFade(x: 0, scale: 1, opacity: 1)))
+            insertion: .modifier(active: SlideFade(x: dx, scale: 0.97, opacity: 0), identity: SlideFade(x: 0, scale: 1, opacity: 1)),
+            removal: .modifier(active: SlideFade(x: -dx, scale: 0.97, opacity: 0), identity: SlideFade(x: 0, scale: 1, opacity: 1)))
     }
+
+    private var shownID: String { shownTrack?.id ?? "" }
 
     private var header: some View {
         HStack(spacing: 14) {
-            HStack(spacing: 14) {
-                ArtworkView(size: 72, radius: 12)
-                    .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
-                titleBlock
+            // ZStack: stara i nowa piosenka nakładają się w tym samym miejscu. (W HStack/VStack stały obok siebie
+            // przez cały czas animacji, więc wszystko skakało.)
+            ZStack(alignment: .leading) {
+                HStack(spacing: 14) {
+                    ArtworkView(size: 72, radius: 12, track: shownTrack)
+                        .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+                    titleBlock(shownTrack)
+                }
+                .id(shownID)
+                .transition(slide)
             }
-            .id(shownTrackID)
-            .transition(slide)
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             moreMenu
         }
     }
 
-    private var titleBlock: some View {
+    private func titleBlock(_ track: Track?) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(engine.currentTrack?.title ?? "Nic nie gra")
+            Text(track?.title ?? "Nic nie gra")
                 .font(.system(size: 19, weight: .semibold))
                 .foregroundStyle(ink)
                 .lineLimit(2)
-            Text(engine.currentTrack?.artist ?? "")
+            Text(track?.artist ?? "")
                 .font(.system(size: 18))
                 .foregroundStyle(ink.opacity(0.6))
                 .lineLimit(1)
@@ -220,18 +231,22 @@ struct NowPlayingView: View {
     private var bigArtwork: some View {
         VStack(spacing: 22) {
             Spacer(minLength: 0)
-            ArtworkView(size: 310, radius: 22)
-                .modifier(FloatMotion(enabled: engine.isPlaying))
-                .scaleEffect(engine.isPlaying ? 1 : 0.86)
-                .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
-                .animation(.spring(response: 0.5, dampingFraction: 0.75), value: engine.isPlaying)
-                .id(shownTrackID)
-                .transition(slide)
-            HStack {
-                titleBlock
-                    .id(shownTrackID)
+            ZStack {
+                ArtworkView(size: 310, radius: 22, track: shownTrack)
+                    .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
+                    .id(shownID)
                     .transition(slide)
-                Spacer(minLength: 8)
+            }
+            .modifier(FloatMotion(enabled: engine.isPlaying))
+            .scaleEffect(engine.isPlaying ? 1 : 0.86)
+            .animation(.spring(response: 0.5, dampingFraction: 0.75), value: engine.isPlaying)
+            HStack {
+                ZStack(alignment: .leading) {
+                    titleBlock(shownTrack)
+                        .id(shownID)
+                        .transition(slide)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 moreMenu
             }
             Spacer(minLength: 0)

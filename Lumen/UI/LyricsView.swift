@@ -421,12 +421,13 @@ struct LyricsView: View {
     }
 
     var body: some View {
+        // Samo krótkie przenikanie (bez skalowania całej listy rozmytych linijek - to przycinało przy zmianie piosenki).
         ZStack {
             content
                 .id(lyrics.revision)
-                .transition(.opacity.combined(with: .scale(scale: 0.98, anchor: .top)))
+                .transition(.opacity)
         }
-        .animation(.easeInOut(duration: 0.35), value: lyrics.revision)
+        .animation(.easeOut(duration: 0.22), value: lyrics.revision)
     }
 
     @ViewBuilder private var content: some View {

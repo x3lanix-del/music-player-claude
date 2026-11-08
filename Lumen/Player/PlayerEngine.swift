@@ -24,6 +24,8 @@ final class PlayerEngine: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var isBuffering = false
     @Published private(set) var artwork: UIImage? = nil
+    /// Piosenka, do której należy `artwork` (przy przełączaniu stara okładka nie może trafić do nowej piosenki).
+    @Published private(set) var artworkTrackID: String? = nil
     @Published private(set) var palette: [UIColor] = []
     @Published private(set) var shuffle = false
     @Published private(set) var playbackRate: Double = 1
@@ -626,6 +628,7 @@ final class PlayerEngine: ObservableObject {
         lastTime = startAt
         lastTimeID = track.id
         artwork = nil
+        artworkTrackID = nil
         nowPlayingArtwork = nil
         activateSession()
         beginBackgroundGrace()
@@ -694,6 +697,7 @@ final class PlayerEngine: ObservableObject {
             guard let img = await RadioIconCache.shared.resolve(station) else { return }
             guard let self = self, self.currentTrack?.id == track.id else { return }
             self.artwork = img
+            self.artworkTrackID = track.id
             self.palette = ArtworkLoader.palette(from: img)
             self.nowPlayingArtwork = NowPlayingArtwork.make(img)
             self.updateNowPlaying()
@@ -905,6 +909,7 @@ final class PlayerEngine: ObservableObject {
             let image = await ArtworkLoader.shared.artwork(for: track.id)
             guard let self = self, self.currentTrack?.id == track.id else { return }
             self.artwork = image
+            self.artworkTrackID = image == nil ? nil : track.id
             self.palette = image.map { ArtworkLoader.palette(from: $0) } ?? []
             self.nowPlayingArtwork = image.map { NowPlayingArtwork.make($0) }
             self.updateNowPlaying()

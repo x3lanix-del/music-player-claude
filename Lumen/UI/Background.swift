@@ -140,9 +140,9 @@ struct AnimatedBackground: View {
                     .id(blurVersion)
                     .transition(.opacity)
             }
+            // Jedno płótno na stałe: kolory nowej piosenki przenikają się w samym rysowaniu
+            // (wcześniej na czas przejścia rysowały się dwa pełnoekranowe płótna naraz, co gubiło klatki).
             blobs(size: size)
-                .id(blurVersion)
-                .transition(.opacity)
             Color.black.opacity(player ? min(settings.data.dim, 0.12) : settings.data.dim)
         }
     }
@@ -154,7 +154,8 @@ struct AnimatedBackground: View {
 
     private func rebuild() async {
         guard player || settings.data.theme == .blur, let src = engine.artwork else {
-            if engine.artwork == nil { blurred = nil }
+            // Chwila przełączania piosenki (okładka jeszcze się ładuje): zostaje poprzednie tło, bez mignięcia czernią.
+            if engine.currentTrack == nil { blurred = nil }
             return
         }
         // Nasycenie rozmytej okładki zależy od tego, ile koloru naprawdę na niej jest: szara okładka zostaje szara
@@ -164,7 +165,7 @@ struct AnimatedBackground: View {
             return ArtworkLoader.blurred(src, radius: 9, saturation: colorful < 0.12 ? 0.25 : 1.0 + 0.45 * colorful)
         }.value
         // Płynne przejście kolorów (rozmyty obraz i plamy zmieniają się z wygaszaniem, a nie skokiem).
-        withAnimation(.easeInOut(duration: 1.3)) {
+        withAnimation(.easeInOut(duration: 1.1)) {
             blurred = result
             blurVersion += 1
         }
@@ -179,16 +180,48 @@ private struct FlowingGlass: View {
     let speed: Double
     let paused: Bool
 
+    private struct RGBA: Equatable {
+        var r: Double, g: Double, b: Double, a: Double
+    }
+
+    /// Kolory poprzedniej piosenki, nowe i chwila zmiany - przejście liczone w rysowaniu.
+    @State private var from: [RGBA] = []
+    @State private var to: [RGBA] = []
+    @State private var changedAt = Date.distantPast
+    private static let fade = 1.2
+
+    private static func rgba(_ c: Color) -> RGBA {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        UIColor(c).getRed(&r, green: &g, blue: &b, alpha: &a)
+        return RGBA(r: Double(r), g: Double(g), b: Double(b), a: Double(a))
+    }
+
+    /// Kolory w danej chwili (w trakcie przejścia: mieszanka starych i nowych).
+    private func mix(at date: Date) -> [RGBA] {
+        let target = to.isEmpty ? colors.map(FlowingGlass.rgba) : to
+        guard !from.isEmpty, !target.isEmpty else { return target }
+        let p = min(max(date.timeIntervalSince(changedAt) / FlowingGlass.fade, 0), 1)
+        if p >= 1 { return target }
+        let e = p * p * (3 - 2 * p)
+        return (0..<max(from.count, target.count)).map { i in
+            let a = from[i % from.count], b = target[i % target.count]
+            return RGBA(r: a.r + (b.r - a.r) * e, g: a.g + (b.g - a.g) * e,
+                        b: a.b + (b.b - a.b) * e, a: a.a + (b.a - a.a) * e)
+        }
+    }
+
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused)) { tl in
             Canvas { ctx, size in
                 let t = tl.date.timeIntervalSinceReferenceDate * speed
                 let big = max(size.width, size.height)
+                let palette = mix(at: tl.date).map { Color(.sRGB, red: $0.r, green: $0.g, blue: $0.b, opacity: $0.a) }
+                guard !palette.isEmpty else { return }
 
                 // 1) Plamy koloru: każda krąży po własnym torze (różne okresy ~20-40 s), rozciąga się i obraca.
-                let count = max(8, colors.count + 3)
+                let count = max(8, palette.count + 3)
                 for i in 0..<count {
-                    let c = colors[i % colors.count]
+                    let c = palette[i % palette.count]
                     let ph = Double(i) * 1.83
                     let x = size.width * (0.5 + 0.55 * sin(t / (8 + Double(i) * 1.3) + ph))
                     let y = size.height * (0.5 + 0.52 * cos(t / (10 + Double(i) * 1.1) + ph * 1.4))
@@ -221,6 +254,13 @@ private struct FlowingGlass: View {
                                                  startPoint: CGPoint(x: -w / 2, y: 0), endPoint: CGPoint(x: w / 2, y: 0)))
                 }
             }
+        }
+        .onAppear { to = colors.map(FlowingGlass.rgba) }
+        .onChange(of: colors) { _, new in
+            let now = Date()
+            from = mix(at: now)
+            to = new.map(FlowingGlass.rgba)
+            changedAt = now
         }
     }
 }

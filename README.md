@@ -1,3 +1,11 @@
+## 1.29.4
+- Płynne przejście między piosenkami: stara i nowa okładka z tytułem nakładają się w jednym miejscu (wcześniej
+  na czas animacji stały obok siebie i wszystko skakało), krótszy i delikatniejszy ruch, odjeżdżająca piosenka
+  do końca pokazuje swoją okładkę i tytuł, a nowa okładka jest od razu w dużej jakości, gdy jest w pamięci.
+- Tło: kolory nowej piosenki przenikają się na jednym płótnie (wcześniej przez sekundę rysowały się dwa naraz,
+  co przycinało), bez mignięcia czernią przy przełączaniu.
+- Tekst przy zmianie piosenki tylko krótko się przenika (bez skalowania całej listy).
+
 ## 1.29.3
 - Mniej opcji w Ustawieniach: znika wybór animacji tekstu, fali liter, rozmycia i „Usuń zapisane teksty”.
   Animacja liter i rozmycie dalszych linijek są zawsze włączone; rozmiar tekstu jest znowu w „Teksty i wygląd”.
