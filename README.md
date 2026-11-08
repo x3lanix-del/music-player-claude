@@ -1,3 +1,7 @@
+## 1.29.3
+- Mniej opcji w Ustawieniach: znika wybór animacji tekstu, fali liter, rozmycia i „Usuń zapisane teksty”.
+  Animacja liter i rozmycie dalszych linijek są zawsze włączone; rozmiar tekstu jest znowu w „Teksty i wygląd”.
+
 ## 1.29.2
 - Usunięta animowana ikona grającej piosenki na liście (przy włączaniu piosenki rysowała czarne pole na liście);
   wraca zwykła ikonka głośnika. Tytuł w mini-odtwarzaczu przy zmianie piosenki tylko płynnie się przenika.

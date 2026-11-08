@@ -531,9 +531,8 @@ struct LyricsView: View {
     private var synced: some View {
         let rows = cache.rows(revision: lyrics.revision, censor: settings.data.censorProfanity, lines: lyrics.lines)
         let seekable = !engine.isRadio
-        let blur = settings.data.blurInactiveLyrics && !browsing
-        let karaokeAll = settings.data.karaokeLyrics
-        let karaokeLines = settings.data.karaokeLineSync
+        // Rozmycie dalszych linijek i fala liter są zawsze włączone (bez przełączników w Ustawieniach).
+        let blur = !browsing
         let playing = engine.isPlaying
         return ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
@@ -563,7 +562,7 @@ struct LyricsView: View {
                                      translation: translations.indices.contains(row.id) ? translations[row.id] : nil,
                                      seekable: seekable,
                                      blur: blur,
-                                     karaoke: karaokeAll && (row.wordSynced || karaokeLines),
+                                     karaoke: true,
                                      playing: playing,
                                      engine: engine,
                                      lyrics: lyrics) {
