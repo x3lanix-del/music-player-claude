@@ -88,11 +88,18 @@ final class ArtworkLoader {
         }
     }
 
-    /// Do 5 wyrazistych, różnych kolorów z okładki (nie średnia, która robi błoto): próbki z siatki 10x10,
-    /// odrzucone czerń/biel/szarość, wybór zachłannie po jak największej różnicy, kolory lekko podbite.
-    static func palette(from image: UIImage) -> [UIColor] {
+    // MARK: Kolory tła z okładki
+
+    private struct Sample {
+        var r: CGFloat; var g: CGFloat; var b: CGFloat
+        var h: CGFloat; var s: CGFloat; var v: CGFloat
+        var colorful: Bool { v > 0.16 && s > 0.22 }
+    }
+
+    /// Próbki z siatki 12x12 (cały obraz, bez kadrowania).
+    private static func samples(_ image: UIImage) -> [Sample] {
         guard let cg = image.cgImage else { return [] }
-        let n = 10
+        let n = 12
         let space = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
                                   space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
@@ -100,49 +107,89 @@ final class ArtworkLoader {
         ctx.interpolationQuality = .high
         ctx.draw(cg, in: CGRect(x: 0, y: 0, width: n, height: n))
         let p = raw.bindMemory(to: UInt8.self, capacity: n * n * 4)
-
-        struct Sample { var r: CGFloat; var g: CGFloat; var b: CGFloat; var h: CGFloat; var s: CGFloat; var v: CGFloat; var score: CGFloat }
-        var all: [Sample] = []
-        var candidates: [Sample] = []
-        var meanR: CGFloat = 0, meanG: CGFloat = 0, meanB: CGFloat = 0, meanS: CGFloat = 0
+        var out: [Sample] = []
+        out.reserveCapacity(n * n)
         for i in 0..<(n * n) {
             let r = CGFloat(p[i * 4]) / 255, g = CGFloat(p[i * 4 + 1]) / 255, b = CGFloat(p[i * 4 + 2]) / 255
-            meanR += r; meanG += g; meanB += b
-            var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
-            UIColor(red: r, green: g, blue: b, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &a)
-            meanS += s
-            let sample = Sample(r: r, g: g, b: b, h: h, s: s, v: v, score: s * 0.7 + v * 0.3)
-            all.append(sample)
-            guard v > 0.16, s > 0.22 else { continue }      // czerń i szarości nie robią koloru tła
-            candidates.append(sample)
+            var h: CGFloat = 0, sat: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+            UIColor(red: r, green: g, blue: b, alpha: 1).getHue(&h, saturation: &sat, brightness: &v, alpha: &a)
+            out.append(Sample(r: r, g: g, b: b, h: h, s: sat, v: v))
         }
-        let k = CGFloat(n * n)
-        // Szara/czarno-biała okładka: szum kompresji JPEG czasem barwi pojedyncze piksele (np. na różowo),
-        // a przy mało kolorowej okładce te kilka "naładowanych" pikseli potrafi zdominować całą paletę.
-        // Średnie nasycenie całego obrazka (nie tylko wybranych próbek) mówi, czy okładka naprawdę ma kolor.
-        guard meanS / k > 0.07, candidates.count >= 5 else {
-            return grayPalette(from: all.map { $0.v })
-        }
+        return out
+    }
+
+    /// Jaka część okładki jest naprawdę kolorowa (0 = szara / czarno-biała, 1 = cała w kolorze).
+    static func colorfulness(of image: UIImage) -> Double {
+        let all = samples(image)
+        guard !all.isEmpty else { return 0 }
+        let meanS = all.reduce(0) { $0 + $1.s } / CGFloat(all.count)
+        guard meanS > 0.08 else { return 0 }
+        return Double(all.filter { $0.colorful }.count) / Double(all.count)
+    }
+
+    /// Do 5 kolorów tła, w takich proporcjach, w jakich naprawdę są na okładce:
+    /// - szara / czarno-biała okładka = szare tło (szum kompresji JPEG nie robi już różowych plam),
+    /// - okładka częściowo szara = część palety szara, część w kolorach okładki,
+    /// - kolor, który zajmuje tylko mały kawałek okładki (< 3%), nie trafia do tła,
+    /// - kolory są uśrednione z prawdziwych pikseli (bez sztucznego podbijania i wymyślonych odcieni).
+    static func palette(from image: UIImage) -> [UIColor] {
+        let all = samples(image)
+        guard !all.isEmpty else { return [] }
+        let k = CGFloat(all.count)
+        let colorful = all.filter { $0.colorful }
+        let neutral = all.filter { !$0.colorful }
+        let share = CGFloat(colorful.count) / k
+        let meanS = all.reduce(0) { $0 + $1.s } / k
+        guard meanS > 0.08, share >= 0.12 else { return grayPalette(from: neutral.isEmpty ? all : neutral) }
+
         func distance(_ a: Sample, _ b: Sample) -> CGFloat {
             let dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b
             return (dr * dr + dg * dg + db * db).squareRoot()
         }
-        var picked: [Sample] = []
-        for s in candidates.sorted(by: { $0.score > $1.score }) {
-            if picked.allSatisfy({ distance($0, s) > 0.32 }) { picked.append(s) }
-            if picked.count == 5 { break }
+        // Grupy podobnych kolorów: suma składowych (do średniej) i liczba pikseli.
+        var groups: [(first: Sample, r: CGFloat, g: CGFloat, b: CGFloat, count: Int)] = []
+        for px in colorful.sorted(by: { $0.s * 0.7 + $0.v * 0.3 > $1.s * 0.7 + $1.v * 0.3 }) {
+            if let i = groups.firstIndex(where: { distance($0.first, px) <= 0.3 }) {
+                groups[i].r += px.r; groups[i].g += px.g; groups[i].b += px.b; groups[i].count += 1
+            } else {
+                groups.append((px, px.r, px.g, px.b, 1))
+            }
         }
-        if picked.isEmpty { return grayPalette(from: all.map { $0.v }) }
-        return picked.map {
-            UIColor(hue: $0.h, saturation: min(1, $0.s * 1.25), brightness: max($0.v, 0.5), alpha: 1)
+        let minCount = max(2, Int((k * 0.03).rounded()))
+        let main = groups.filter { $0.count >= minCount }.sorted { $0.count > $1.count }
+        guard !main.isEmpty else { return grayPalette(from: neutral.isEmpty ? all : neutral) }
+
+        // Ile miejsc w palecie dostają kolory: tyle, ile okładki jest kolorowe (reszta to jej szarości).
+        let slots = min(main.count, max(1, Int((share * 5).rounded())))
+        var out: [UIColor] = main.prefix(slots).map { g in
+            let n = CGFloat(g.count)
+            var h: CGFloat = 0, sat: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+            UIColor(red: g.r / n, green: g.g / n, blue: g.b / n, alpha: 1).getHue(&h, saturation: &sat, brightness: &v, alpha: &a)
+            // Tylko lekka korekta, żeby plamy było widać na ciemnym tle - odcień i nasycenie zostają z okładki.
+            return UIColor(hue: h, saturation: min(1, sat * 1.05), brightness: max(v, 0.38), alpha: 1)
         }
+        if out.count < 5, share < 0.85, !neutral.isEmpty {
+            let grays = grayPalette(from: neutral)
+            var i = 0
+            while out.count < 5 {
+                out.append(grays[i % grays.count])
+                i += 1
+            }
+        }
+        return out
     }
 
-    /// Paleta odcieni szarości z rozpiętości jasności prawdziwych pikseli okładki (zero sztucznego koloru).
-    private static func grayPalette(from values: [CGFloat]) -> [UIColor] {
-        let levels = values.sorted()
-        guard !levels.isEmpty else { return [UIColor(white: 0.3, alpha: 1)] }
+    /// Odcienie "szarości" z rozpiętości jasności prawdziwych pikseli okładki. Zostaje tylko taki odcień,
+    /// jaki ma średnio cała szara część (np. ciepła szarość), i to mocno stonowany - zero wymyślonego koloru.
+    private static func grayPalette(from px: [Sample]) -> [UIColor] {
+        guard !px.isEmpty else { return [UIColor(white: 0.3, alpha: 1)] }
+        let n = CGFloat(px.count)
+        let mr = px.reduce(0) { $0 + $1.r } / n, mg = px.reduce(0) { $0 + $1.g } / n, mb = px.reduce(0) { $0 + $1.b } / n
+        var tintH: CGFloat = 0, tintS: CGFloat = 0, tv: CGFloat = 0, ta: CGFloat = 0
+        UIColor(red: mr, green: mg, blue: mb, alpha: 1).getHue(&tintH, saturation: &tintS, brightness: &tv, alpha: &ta)
+        let tint = tintS < 0.06 ? 0 : min(tintS * 0.8, 0.1)
+        let levels = px.map { $0.v }.sorted()
         let picks = [0.15, 0.35, 0.55, 0.75, 0.9].map { levels[min(levels.count - 1, Int(Double(levels.count - 1) * $0))] }
-        return picks.map { UIColor(white: max(0.22, min(0.82, $0)), alpha: 1) }
+        return picks.map { UIColor(hue: tintH, saturation: tint, brightness: max(0.22, min(0.82, $0)), alpha: 1) }
     }
 }

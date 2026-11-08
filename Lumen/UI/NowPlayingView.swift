@@ -240,17 +240,12 @@ struct NowPlayingView: View {
 
     private var moreMenu: some View {
         Menu {
+            // Krótko: tylko najważniejsze (przewijanie jest na pasku postępu, tłumaczenie w "Tekst piosenki").
             Button { showAddToPlaylist = true } label: { Label("Dodaj do playlisty…", systemImage: "plus") }
-            Button { settings.data.translateLyrics.toggle() } label: {
-                Label(settings.data.translateLyrics ? "Wyłącz tłumaczenie tekstu" : "Tłumacz tekst", systemImage: "character.bubble")
-            }
             lyricsMenu
             sleepMenu
             Button { showAudioEditor = true } label: { Label("Edytor dźwięku…", systemImage: "slider.horizontal.3") }
-            Button { engine.skip(by: -10) } label: { Label("Cofnij 10 s", systemImage: "gobackward.10") }
-            Button { engine.skip(by: 10) } label: { Label("Do przodu 10 s", systemImage: "goforward.10") }
             if let t = engine.currentTrack {
-                Link(destination: t.watchURL) { Label("Otwórz w YouTube", systemImage: "arrow.up.right.square") }
                 ShareLink(item: t.watchURL) { Label("Udostępnij", systemImage: "square.and.arrow.up") }
             }
         } label: {
@@ -266,11 +261,12 @@ struct NowPlayingView: View {
     /// Wszystko o tekście w jednym podmenu: inna wersja, ręczne przesunięcie, szukanie od nowa.
     private var lyricsMenu: some View {
         Menu {
-            Button { showLyricsPicker = true } label: { Label("Wybierz inną wersję…", systemImage: "text.badge.checkmark") }
-            Button { engine.adjustLyricsOffset(by: 0.25) } label: { Label("Tekst wcześniej (0,25 s)", systemImage: "backward") }
-            Button { engine.adjustLyricsOffset(by: -0.25) } label: { Label("Tekst później (0,25 s)", systemImage: "forward") }
-            Button { engine.resetLyricsOffset() } label: { Label("Przywróć oryginalne czasy", systemImage: "clock.arrow.circlepath") }
-            Button { engine.refreshLyrics() } label: { Label("Szukaj tekstu od nowa", systemImage: "arrow.clockwise") }
+            Button { showLyricsPicker = true } label: { Label("Inna wersja tekstu…", systemImage: "text.badge.checkmark") }
+            Button { engine.adjustLyricsOffset(by: 0.25) } label: { Label("Tekst wcześniej", systemImage: "backward") }
+            Button { engine.adjustLyricsOffset(by: -0.25) } label: { Label("Tekst później", systemImage: "forward") }
+            Button { settings.data.translateLyrics.toggle() } label: {
+                Label(settings.data.translateLyrics ? "Wyłącz tłumaczenie" : "Tłumacz tekst", systemImage: "character.bubble")
+            }
         } label: {
             Label("Tekst piosenki", systemImage: "quote.bubble")
         }
@@ -290,7 +286,7 @@ struct NowPlayingView: View {
             if sleepActive {
                 Button(role: .destructive) { engine.cancelSleepTimer() } label: { Label("Wyłącz", systemImage: "xmark") }
             }
-            ForEach([15, 30, 45, 60, 90], id: \.self) { minutes in
+            ForEach([15, 30, 60], id: \.self) { minutes in
                 Button { engine.setSleepTimer(minutes: minutes) } label: { Label("\(minutes) min", systemImage: "timer") }
             }
             Button { engine.setSleepAfterTrack() } label: { Label("Po tej piosence", systemImage: "music.note") }

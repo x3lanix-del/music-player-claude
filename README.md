@@ -1,3 +1,10 @@
+## 1.29.1
+- Menu „•••” w odtwarzaczu jest krótsze: Dodaj do playlisty, Tekst piosenki (inna wersja, wcześniej / później,
+  tłumaczenie), Wyłącznik czasowy (15 / 30 / 60 min, po piosence), Edytor dźwięku, Udostępnij.
+- Tło z okładki naprawdę pasuje do okładki: szara okładka daje szare tło (koniec różowych plam z szumu JPEG),
+  okładka częściowo szara - tło częściowo szare, a kolory są w takich proporcjach jak na okładce
+  (kolor z malutkiego fragmentu nie zalewa już całego ekranu, nie ma też wymyślonych odcieni).
+
 ## 1.29.0 - idealne teksty
 **Teksty szybciej**
 - Wszystkie źródła tekstów i wszystkie warianty tytułu są pytane naraz (wcześniej po kolei), a większość źródeł

@@ -92,7 +92,7 @@ struct AnimatedBackground: View {
         }
     }
 
-    /// Kolory z okładki, mocniej nasycone i jaśniejsze (żeby ruch było widać); gdy jest ich mało, dochodzą ich warianty odcienia.
+    /// Kolory z okładki, lekko rozjaśnione (żeby ruch było widać); gdy jest ich mało, dochodzą ich jaśniejsze / ciemniejsze warianty.
     private var colors: [Color] {
         var base = Array(engine.palette.prefix(5))
         if base.isEmpty { return [Color(white: 0.5), Color(white: 0.3)] }
@@ -107,10 +107,20 @@ struct AnimatedBackground: View {
             return Color(hue: Double(hue < 0 ? hue + 1 : hue), saturation: Double(s2), brightness: Double(b2))
         }
         var out = base.map { boosted($0) }
-        var shift: CGFloat = 0.08
+        // Za mało kolorów: jaśniejsze / ciemniejsze warianty TYCH SAMYCH kolorów (bez wymyślania nowych odcieni,
+        // więc tło zawsze pasuje do okładki).
+        var step = 0
         while out.count < 5 {
-            out.append(boosted(base[out.count % base.count], hueShift: shift))
-            shift += 0.07
+            let src = base[step % base.count]
+            var h: CGFloat = 0, sat: CGFloat = 0, br: CGFloat = 0, a: CGFloat = 0
+            if src.getHue(&h, saturation: &sat, brightness: &br, alpha: &a) {
+                let factor: CGFloat = step % 2 == 0 ? 0.72 : 1.18
+                out.append(Color(hue: Double(h), saturation: Double(sat * 0.92),
+                                 brightness: Double(min(1, max(0.25, br * factor)))))
+            } else {
+                out.append(Color(uiColor: src))
+            }
+            step += 1
         }
         base.removeAll()
         return out
@@ -147,7 +157,12 @@ struct AnimatedBackground: View {
             if engine.artwork == nil { blurred = nil }
             return
         }
-        let result = await Task.detached(priority: .utility) { ArtworkLoader.blurred(src, radius: 9, saturation: 1.6) }.value
+        // Nasycenie rozmytej okładki zależy od tego, ile koloru naprawdę na niej jest: szara okładka zostaje szara
+        // (wcześniej stałe +60% wyciągało z szumu JPEG np. róż), kolorowa dostaje lekkie podbicie.
+        let result = await Task.detached(priority: .utility) { () -> UIImage? in
+            let colorful = ArtworkLoader.colorfulness(of: src)
+            return ArtworkLoader.blurred(src, radius: 9, saturation: colorful < 0.12 ? 0.25 : 1.0 + 0.45 * colorful)
+        }.value
         // Płynne przejście kolorów (rozmyty obraz i plamy zmieniają się z wygaszaniem, a nie skokiem).
         withAnimation(.easeInOut(duration: 1.3)) {
             blurred = result
