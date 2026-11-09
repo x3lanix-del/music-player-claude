@@ -1,0 +1,16 @@
+name: Runner check
+
+# Szybki test (kilka sekund na Linuksie): czy GitHub Actions w ogóle uruchamia joby w tym repo.
+# Gdy ten test przechodzi, a build iOS stoi w kolejce - brakuje wolnych maszyn macOS po stronie GitHuba.
+on:
+  workflow_dispatch:
+  push:
+    branches: [claude/lyrics-app-optimization-8tp5rs]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: |
+          echo "GitHub Actions działa: $(date -u)"

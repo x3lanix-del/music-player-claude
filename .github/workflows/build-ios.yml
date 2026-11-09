@@ -11,6 +11,11 @@ on:
 permissions:
   contents: write
 
+# Nowy push na tę samą gałąź anuluje starszy, jeszcze czekający / trwający build (bez korków w kolejce).
+concurrency:
+  group: build-ios-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: macos-latest
