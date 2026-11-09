@@ -1,3 +1,15 @@
+## 1.30.0
+- **Nowa zakładka Główna** (pierwsza na pasku): „Ostatnio grane”, „Na czasie w Polsce” (top 20 teledysków
+  muzycznych z YouTube, przez YouTube Data API v3) i „Na czasie na świecie”. Listy zapisują się na dysku (są od razu,
+  też bez internetu) i odświeżają co kilka godzin albo po przeciągnięciu w dół. Przytrzymaj okładkę: zagraj jako
+  następną, do kolejki, do playlisty.
+- **Piosenki startują od razu:** adresy strumieni pierwszych piosenek z wyników wyszukiwania, playlisty i zakładki
+  Główna są pobierane z wyprzedzeniem, więc po dotknięciu nie trzeba czekać na YouTube.
+- **Ze strumienia na plik bez przerwy:** piosenka gra najpierw z internetu, a w tle pobiera się na dysk. Gdy się
+  pobierze, odtwarzacz przechodzi na plik (bez internetu) w chwili, gdy tego nie słychać: przy pauzie, przy
+  przewijaniu, gdy strumień się zatnie albo zniknie internet - muzyka nie staje.
+- (YouTube Data API v3 daje listy i informacje o filmach, ale nie dźwięk - dźwięk dalej pobiera YouTubeKit.)
+
 ## 1.29.5
 - Nowe tło z okładki, jak w Apple Music: sama okładka, mocno rozmyta, w trzech wielkich warstwach (jedna odbita
   lustrzanie), które powoli obracają się i krążą w różne strony - po ekranie płyną prawdziwe kolory i kształty

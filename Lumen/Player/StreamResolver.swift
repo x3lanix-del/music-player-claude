@@ -52,6 +52,20 @@ actor StreamResolver {
         }
     }
 
+    /// Adresy kilku piosenek z wyprzedzeniem (np. widocznych na liście albo "na czasie"): po dotknięciu piosenka
+    /// rusza od razu, bo nie trzeba już czekać na YouTube. Piosenki pobrane na dysk są pomijane.
+    func prewarm(_ ids: [String], limit: Int = 4) async {
+        var done = 0
+        for id in ids {
+            if done >= limit || Task.isCancelled { break }
+            if let entry = cache[id], entry.expires > Date() { continue }
+            if inflight[id] != nil { continue }
+            if await AudioCache.shared.localURL(for: id) != nil { continue }
+            _ = try? await resolve(id)
+            done += 1
+        }
+    }
+
     /// Rozgrzewka przy starcie: pobiera skrypt odtwarzacza YouTube, żeby pierwsza piosenka ruszyła szybciej.
     func warmUp() async {
         _ = try? await YouTube(videoID: "dQw4w9WgXcQ", methods: [.local]).streams
@@ -127,5 +141,22 @@ enum FailureText {
         if error is StreamError { return "Nie znaleziono strumienia audio dla tego filmu." }
         if (error as NSError).domain == NSURLErrorDomain { return "Brak połączenia z YouTube. Sprawdź internet." }
         return "Nie udało się pobrać strumienia z YouTube."
+    }
+}
+
+/// Rozgrzewanie adresów widocznych piosenek - z małym opóźnieniem i bez dublowania (lista może się szybko zmieniać).
+@MainActor
+enum PlaybackPrewarm {
+    private static var task: Task<Void, Never>?
+
+    static func warm(_ tracks: [Track], limit: Int = 4) {
+        let ids = tracks.filter { !$0.isRadio }.prefix(limit * 2).map { $0.id }
+        guard !ids.isEmpty else { return }
+        task?.cancel()
+        task = Task.detached(priority: .utility) {
+            try? await Task.sleep(nanoseconds: 400_000_000)
+            if Task.isCancelled { return }
+            await StreamResolver.shared.prewarm(Array(ids), limit: limit)
+        }
     }
 }

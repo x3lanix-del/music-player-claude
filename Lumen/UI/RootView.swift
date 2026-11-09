@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum AppTab: Hashable { case library, radio, search, settings }
+enum AppTab: Hashable { case home, library, radio, search, settings }
 
 extension View {
     func pageVisible(_ visible: Bool) -> some View {
@@ -20,12 +20,13 @@ struct RootView: View {
     @EnvironmentObject var toast: ToastCenter
     @EnvironmentObject var library: LibraryStore
     @EnvironmentObject var volume: VolumeController
-    @State private var tab: AppTab = .library
+    @State private var tab: AppTab = .home
     @State private var showNowPlaying = false
     @State private var showRadioPlayer = false
     @State private var showGuide = false
     @State private var librarySelected: UUID? = nil
     @StateObject private var searchModel = SearchModel()
+    @StateObject private var homeModel = HomeModel()
     @StateObject private var radioStore = RadioStore()
 
     var body: some View {
@@ -89,10 +90,12 @@ struct RootView: View {
         toast.show("Dodano playlistę \"\(p.name)\" (\(Pl.songs(p.tracks.count))). Pobieram piosenki w tle.")
     }
 
-    /// All three pages stay alive and only the active one is visible and touchable.
+    /// All pages stay alive and only the active one is visible and touchable.
     /// (Rebuilding a page on every tab switch was what made switching tabs lag.)
     private var pages: some View {
         ZStack {
+            HomeView(model: homeModel)
+                .pageVisible(tab == .home)
             LibraryRootView(selected: $librarySelected)
                 .pageVisible(tab == .library)
             RadioView(store: radioStore, isVisible: tab == .radio, openPlayer: { showRadioPlayer = true })

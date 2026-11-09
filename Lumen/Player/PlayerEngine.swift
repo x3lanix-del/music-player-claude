@@ -24,6 +24,25 @@ final class PlayerEngine: ObservableObject {
     @Published private(set) var isPlaying = false
     @Published private(set) var isBuffering = false
     @Published private(set) var artwork: UIImage? = nil
+    /// Ostatnio grane piosenki (najnowsza pierwsza), zapisane między uruchomieniami - dla zakładki Główna.
+    @Published private(set) var recent: [Track] = PlayerEngine.loadRecent()
+    nonisolated private static let recentKey = "lumen.recent.v1"
+
+    private func remember(_ track: Track) {
+        guard !track.isRadio else { return }
+        var list = recent.filter { $0.id != track.id }
+        list.insert(track, at: 0)
+        if list.count > 30 { list.removeLast(list.count - 30) }
+        recent = list
+        if let data = try? JSONEncoder().encode(list) { UserDefaults.standard.set(data, forKey: PlayerEngine.recentKey) }
+    }
+
+    nonisolated private static func loadRecent() -> [Track] {
+        guard let data = UserDefaults.standard.data(forKey: recentKey),
+              let list = try? JSONDecoder().decode([Track].self, from: data) else { return [] }
+        return list
+    }
+
     /// Piosenka, do której należy `artwork` (przy przełączaniu stara okładka nie może trafić do nowej piosenki).
     @Published private(set) var artworkTrackID: String? = nil
     @Published private(set) var palette: [UIColor] = []
@@ -188,6 +207,8 @@ final class PlayerEngine: ObservableObject {
     private var resolving = false
     private var resolveTicks = 0
     private var playingLocalFile = false
+    /// Piosenki, które w tej sesji skończyły się pobierać (gra jeszcze strumień, ale plik już jest na dysku).
+    private var localFiles: [String: URL] = [:]
     private var alignTask: Task<Void, Never>?
     private var prematureRetries = 0
     /// Piosenka, do której należy `lastTime`. Pozycja starej piosenki nigdy nie może trafić do nowej.
@@ -355,6 +376,8 @@ final class PlayerEngine: ObservableObject {
         player.pause()
         isPlaying = false
         isBuffering = false
+        // W pauzie nic nie słychać - dobra chwila, żeby przejść ze strumienia na pobrany plik.
+        swapToLocal(at: livePlaybackTime())
         applyBleep()
         updateNowPlaying()
     }
@@ -395,6 +418,8 @@ final class PlayerEngine: ObservableObject {
         lastTimeID = currentTrack?.id
         lyrics.tick(t)
         updateCensor(at: t)
+        // Przewijanie i tak przerywa dźwięk na chwilę - jeśli plik już jest pobrany, przewijamy od razu w pliku.
+        if swapToLocal(at: t) { updateNowPlaying(); return }
         guard player.currentItem != nil else { updateNowPlaying(); return }
         isSeeking = true
         let target = CMTime(seconds: t, preferredTimescale: 600)
@@ -636,6 +661,7 @@ final class PlayerEngine: ObservableObject {
         startLoad(track: track, startAt: startAt)
         resetRadioState()
         if !track.isRadio {
+            remember(track)
             lyrics.load(track: track, offset: settings.lyricsOffset(for: track.id), stretch: settings.lyricsStretch(for: track.id))
             loadArtwork(for: track)
         } else {
@@ -870,7 +896,7 @@ final class PlayerEngine: ObservableObject {
         isSeeking = false
     }
 
-    private func attach(url: URL, track: Track, startAt: Double, local: Bool) {
+    private func attach(url: URL, track: Track, startAt: Double, local: Bool, align: Bool = true) {
         // Spóźniony wynik dla innej piosenki niż ta, która ma teraz grać, nigdy nie może zacząć grać.
         guard currentTrack?.id == track.id else { return }
         resolving = false
@@ -892,16 +918,48 @@ final class PlayerEngine: ObservableObject {
         if wantsPlaying && !interrupted { player.play() }
         if track.isRadio { return }
         if local {
-            scheduleAutoAlign(track: track, file: url)
+            if align { scheduleAutoAlign(track: track, file: url) }
         } else {
-            // Pobierz utwór na stałe w tle, a gdy będzie na dysku - dopasuj do niego tekst.
+            // Pobierz utwór na stałe w tle, a gdy będzie na dysku - dopasuj do niego tekst. Od tej chwili
+            // odtwarzacz może po cichu przejść ze strumienia na plik (bez internetu).
             let id = track.id
             Task(priority: .utility) { [weak self] in
                 guard let file = await AudioCache.shared.ensure(id) else { return }
+                self?.downloadFinished(id, file: file)
                 self?.scheduleAutoAlign(track: track, file: file)
             }
         }
         prefetchNext()
+    }
+
+    // MARK: - Ze strumienia na plik (bez przerwy)
+
+    /// Piosenka skończyła się pobierać. Zwykle gra dalej ze strumienia (przełączenie w trakcie grania byłoby
+    /// słychać), a na plik przechodzi w chwili, gdy tego nie słychać: pauza, przewinięcie, zacięcie strumienia.
+    /// Bez internetu - od razu, żeby muzyka nie stanęła.
+    private func downloadFinished(_ id: String, file: URL) {
+        localFiles[id] = file
+        if localFiles.count > 40, let any = localFiles.keys.first(where: { $0 != id }) { localFiles[any] = nil }
+        if currentTrack?.id == id, !Reachability.shared.online {
+            swapToLocal(at: livePlaybackTime())
+        }
+    }
+
+    /// Gra strumień, a plik tej piosenki już jest na dysku: przejdź na plik w tym samym miejscu.
+    @discardableResult
+    private func swapToLocal(at seconds: Double) -> Bool {
+        guard !isRadio, !playingLocalFile, let t = currentTrack, let file = localFiles[t.id] else { return false }
+        guard FileManager.default.fileExists(atPath: file.path) else {
+            localFiles[t.id] = nil
+            return false
+        }
+        let at = max(0, seconds.isFinite ? seconds : lastTime)
+        lastTime = at
+        lastTimeID = t.id
+        stalledTicks = 0
+        reloadAttempts = 0
+        attach(url: file, track: t, startAt: at, local: true, align: false)
+        return true
     }
 
     private func loadArtwork(for track: Track) {
@@ -1060,6 +1118,7 @@ final class PlayerEngine: ObservableObject {
         if let tr = currentTrack, tr.duration > 20, lastTime < tr.duration - 8, prematureRetries < 3 {
             prematureRetries += 1
             isBuffering = wantsPlaying
+            if swapToLocal(at: resumeTime(for: tr)) { return }
             startLoad(track: tr, startAt: resumeTime(for: tr), forceRefresh: true)
             return
         }
@@ -1113,12 +1172,15 @@ final class PlayerEngine: ObservableObject {
     /// The stream address may have expired or been refused - fetch a fresh one once, then give up.
     private func handlePlaybackFailure() {
         guard let t = currentTrack, wantsPlaying else { return }
+        // Strumień padł, a plik już jest pobrany: gramy dalej z pliku.
+        if swapToLocal(at: resumeTime(for: t)) { return }
         if !refreshedURLForCurrent {
             refreshedURLForCurrent = true
             isBuffering = true
             if playingLocalFile {
                 // Uszkodzony plik na dysku - usuń go i zagraj ze strumienia.
                 let id = t.id
+                localFiles[id] = nil
                 Task { await AudioCache.shared.remove(id: id) }
             }
             startLoad(track: t, startAt: resumeTime(for: t), forceRefresh: true)
@@ -1199,6 +1261,8 @@ final class PlayerEngine: ObservableObject {
         resolveTicks = 0
         guard player.currentItem != nil else { return }
         stalledTicks += 1
+        // Strumień się zaciął (słaby internet), a plik już jest na dysku: od razu gramy z pliku.
+        if stalledTicks >= 2, swapToLocal(at: resumeTime(for: t)) { return }
         if stalledTicks % 5 == 0 {
             // Za długo bez dźwięku: nowy adres strumienia od bieżącej pozycji.
             reloadAttempts += 1

@@ -113,6 +113,24 @@ struct YouTubeAPI {
         return result
     }
 
+    /// Najpopularniejsze teraz teledyski muzyczne w kraju (lista „Na czasie”, kategoria 10 = Muzyka).
+    /// Kosztuje 1 jednostkę dziennego limitu. Pomija transmisje na żywo i bardzo długie filmy (składanki).
+    func trendingMusic(region: String, max: Int = 30) async throws -> [Track] {
+        let r = try await get("/videos", [
+            "part": "snippet,contentDetails", "chart": "mostPopular", "videoCategoryId": "10",
+            "regionCode": region, "maxResults": String(max)
+        ], as: VideosResponse.self)
+        return r.items.compactMap { item -> Track? in
+            guard let sn = item.snippet else { return nil }
+            let seconds = ISODuration.seconds(item.contentDetails?.duration ?? "")
+            guard seconds >= 45, seconds <= 900 else { return nil }
+            return Track(id: item.id,
+                         title: HTMLEntities.decode(sn.title),
+                         artist: TitleCleaner.cleanChannel(sn.channelTitle),
+                         duration: seconds)
+        }
+    }
+
     func video(id: String) async throws -> Track {
         if !hasKey { return try await YouTubeAPI.oEmbedTrack(id: id) }
         let list = try await videos(ids: [id], embeddableOnly: false)

@@ -368,6 +368,8 @@ struct PlaylistDetailView: View {
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
                 .environment(\.editMode, $editMode)
+                // Pierwsze niepobrane piosenki dostają adres strumienia z wyprzedzeniem (start bez czekania).
+                .onAppear { PlaybackPrewarm.warm(p.tracks) }
             }
         }
         .photosPicker(isPresented: $showCoverPicker, selection: $coverItem, matching: .images)

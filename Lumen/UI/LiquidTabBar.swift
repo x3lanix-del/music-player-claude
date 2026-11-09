@@ -17,6 +17,7 @@ struct LiquidTabBar: View {
     }
 
     private let items: [Item] = [
+        Item(tab: .home, icon: "house", title: "Główna"),
         Item(tab: .library, icon: "music.note.list", title: "Biblioteka"),
         Item(tab: .radio, icon: "dot.radiowaves.left.and.right", title: "Radio"),
         Item(tab: .search, icon: "magnifyingglass", title: "Szukaj"),

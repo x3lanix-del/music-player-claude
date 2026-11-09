@@ -85,6 +85,9 @@ struct SearchView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                // Pierwsze wyniki dostają adres strumienia z wyprzedzeniem - po dotknięciu grają od razu.
+                .onAppear { PlaybackPrewarm.warm(model.results) }
+                .onChange(of: model.results.map { $0.id }) { _, _ in PlaybackPrewarm.warm(model.results) }
             }
             }
             .transition(.opacity.combined(with: .scale(scale: 0.97)))
