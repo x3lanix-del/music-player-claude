@@ -1,3 +1,10 @@
+## 1.29.5
+- Nowe tło z okładki, jak w Apple Music: sama okładka, mocno rozmyta, w trzech wielkich warstwach (jedna odbita
+  lustrzanie), które powoli obracają się i krążą w różne strony - po ekranie płyną prawdziwe kolory i kształty
+  okładki (zamiast plam z wybranych kolorów). Szara okładka zostaje szara, kolorowa jest żywa.
+- Jasne okładki (np. białe, różowe) są automatycznie mocniej przyciemnione, żeby biały tekst był czytelny.
+- Przy zmianie piosenki nowa okładka płynnie przenika się ze starą; warstwy składa karta graficzna (bez przycinania).
+
 ## 1.29.4
 - Płynne przejście między piosenkami: stara i nowa okładka z tytułem nakładają się w jednym miejscu (wcześniej
   na czas animacji stały obok siebie i wszystko skakało), krótszy i delikatniejszy ruch, odjeżdżająca piosenka

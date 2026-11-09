@@ -62,8 +62,8 @@ final class ArtworkLoader {
     }
 
     /// Small, pre-blurred, saturated copy used by the animated background.
-    static func blurred(_ image: UIImage, radius: Double, saturation: Double = 1.45) -> UIImage? {
-        let small = downscale(image, maxSide: 64)
+    static func blurred(_ image: UIImage, radius: Double, saturation: Double = 1.45, maxSide: CGFloat = 64) -> UIImage? {
+        let small = downscale(image, maxSide: maxSide)
         guard let input = CIImage(image: small) else { return nil }
         let extent = input.extent
         guard let blur = CIFilter(name: "CIGaussianBlur") else { return nil }
@@ -119,6 +119,15 @@ final class ArtworkLoader {
             out.append(Sample(r: r, g: g, b: b, h: h, s: sat, v: v))
         }
         return out
+    }
+
+    /// Średnia jasność obrazka (0...1) - do przyciemnienia tła pod białym tekstem.
+    static func meanBrightness(of image: UIImage) -> Double {
+        let all = samples(image)
+        guard !all.isEmpty else { return 0.4 }
+        // Jasność postrzegana (zieleń jaśniejsza niż niebieski).
+        let sum = all.reduce(0.0) { $0 + Double(0.299 * $1.r + 0.587 * $1.g + 0.114 * $1.b) }
+        return sum / Double(all.count)
     }
 
     /// Jaka część okładki jest naprawdę kolorowa (0 = szara / czarno-biała, 1 = cała w kolorze).
