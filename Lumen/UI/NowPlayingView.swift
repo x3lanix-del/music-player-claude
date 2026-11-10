@@ -108,8 +108,6 @@ struct NowPlayingView: View {
 
     /// Kolor "klimatu" piosenki z okładki (szara okładka = zwykły kolor tekstu).
     private var vibe: Color { engine.vibe.map { Color(uiColor: $0) } ?? ink }
-    /// Własny kolor akcentu z Ustawień ma pierwszeństwo przed kolorem z okładki.
-    private var progressTint: Color { settings.data.accentHex.isEmpty ? vibe : accentInk }
 
     var body: some View {
         ZStack {
@@ -130,8 +128,6 @@ struct NowPlayingView: View {
                 }
 
                 ProgressSection(clock: engine.clock, seek: { engine.seek(to: $0) })
-                    .environment(\.accentInk, progressTint)
-                    .animation(.easeInOut(duration: 0.8), value: engine.vibe)
                     .padding(.top, 6)
                 controls
                 VolumeRow().padding(.bottom, 14)
@@ -340,8 +336,6 @@ struct NowPlayingView: View {
                 engine.togglePlayPause()
             } label: {
                 ZStack {
-                    // Miękko pulsująca poświata w kolorze okładki, gdy muzyka gra.
-                    PlayPulse(color: vibe, active: engine.isPlaying)
                     if engine.wantsPlaying && engine.isBuffering && !engine.isPlaying {
                         ProgressView().tint(accentInk).scaleEffect(1.4)
                     } else {
@@ -482,27 +476,6 @@ struct QueueSheet: View {
         case .all: return "Powtarzaj wszystko"
         case .one: return "Powtarzaj jedną"
         }
-    }
-}
-
-/// Miękka, oddychająca poświata pod przyciskiem play (w kolorze okładki), widoczna tylko gdy muzyka gra.
-struct PlayPulse: View {
-    let color: Color
-    let active: Bool
-    @State private var breathe = false
-
-    var body: some View {
-        Circle()
-            .fill(RadialGradient(colors: [color.opacity(0.4), color.opacity(0)],
-                                 center: .center, startRadius: 6, endRadius: 56))
-            .frame(width: 112, height: 112)
-            .scaleEffect(active ? (breathe ? 1.12 : 0.9) : 0.6)
-            .opacity(active ? 1 : 0)
-            .animation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true), value: breathe)
-            .animation(.easeOut(duration: 0.45), value: active)
-            .onAppear { breathe = true }
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
     }
 }
 

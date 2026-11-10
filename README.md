@@ -1,3 +1,12 @@
+## 1.33.0 - tło z siatki kolorów (jak w Apple Music)
+- Nowe tło (iOS 18+): z okładki wybieranych jest 5 dominujących kolorów (także szarości i czerni - w takich
+  proporcjach, w jakich są na okładce), które trafiają losowo - ale dla danej piosenki zawsze tak samo - na
+  siatkę 4x4. Kolory płynnie przechodzą w siebie (MeshGradient), a punkty siatki powoli falują, więc plamy
+  kolorów płyną po ekranie. Przy zmianie piosenki kolory płynnie przechodzą w nowe. Na iOS 17 zostaje
+  poprzednie tło (obracające się kopie okładki).
+- Przyciski odtwarzania znowu bez kolorów z okładki: pasek postępu, przycisk play i pasek w mini-odtwarzaczu
+  są w zwykłym kolorze (bez kolorowej poświaty).
+
 ## 1.32.0 - tło jak w Apple Music
 - Tło zrobione tak, jak robi to Apple Music: pięć kopii **ostrej** okładki (jedna wielka pod spodem, cztery mniejsze
   w rogach) krąży i obraca się w różnych tempach i kierunkach, a **dopiero potem** całość jest mocno rozmyta

@@ -157,6 +157,46 @@ final class ArtworkLoader {
         return min(max(0.4 / s, 1.08), 2.2)
     }
 
+    /// Dominujące kolory okładki z udziałem w obrazku (od największego) - grupy podobnych pikseli z całego
+    /// obrazka, także szarości i czerni, uśrednione z prawdziwych pikseli. Z tego powstaje tło (siatka kolorów).
+    static func dominantColors(of image: UIImage, max count: Int = 5) -> [(color: UIColor, share: Double)] {
+        let all = samples(image)
+        guard !all.isEmpty else { return [] }
+        func distance(_ a: Sample, _ b: Sample) -> CGFloat {
+            let dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b
+            return (dr * dr + dg * dg + db * db).squareRoot()
+        }
+        var groups: [(first: Sample, r: CGFloat, g: CGFloat, b: CGFloat, count: Int)] = []
+        for px in all {
+            if let i = groups.firstIndex(where: { distance($0.first, px) <= 0.22 }) {
+                groups[i].r += px.r; groups[i].g += px.g; groups[i].b += px.b; groups[i].count += 1
+            } else {
+                groups.append((px, px.r, px.g, px.b, 1))
+            }
+        }
+        let total = Double(all.count)
+        return groups.sorted { $0.count > $1.count }.prefix(count).map { g in
+            let n = CGFloat(g.count)
+            return (UIColor(red: g.r / n, green: g.g / n, blue: g.b / n, alpha: 1), Double(g.count) / total)
+        }
+    }
+
+    /// Kolory siatki tła (np. 4x4 = 16 pól): dominujące kolory okładki, każdy na tylu polach, ile zajmuje okładki
+    /// (ale każdy z głównych co najmniej raz), rozrzucone losowo - za to zawsze tak samo dla tej samej piosenki.
+    static func meshColors(of image: UIImage, seed: Int, cells: Int = 16) -> [UIColor] {
+        let dominant = dominantColors(of: image, max: 5)
+        guard !dominant.isEmpty else { return Array(repeating: UIColor(white: 0.25, alpha: 1), count: cells) }
+        let totalShare = dominant.reduce(0) { $0 + $1.share }
+        var bag: [UIColor] = []
+        for d in dominant {
+            let n = max(1, Int((d.share / max(totalShare, 0.0001) * Double(cells)).rounded()))
+            bag += Array(repeating: d.color, count: n)
+        }
+        while bag.count < cells { bag.append(dominant[0].color) }
+        var rng = SeededRandom(seed: UInt64(truncatingIfNeeded: seed))
+        return Array(bag.shuffled(using: &rng).prefix(cells))
+    }
+
     /// Kolor "klimatu" piosenki prosto z okładki - ale tylko wtedy, gdy jakiś kolor naprawdę na niej dominuje
     /// (co najmniej 18% obrazka). Mały kolorowy element na szarej okładce (np. niebieskie logo) nie barwi już
     /// aplikacji na niebiesko. Kolor jest rozjaśniony, żeby świecił na ciemnym tle. nil = biały.
@@ -265,5 +305,20 @@ final class ArtworkLoader {
         let levels = px.map { $0.v }.sorted()
         let picks = [0.15, 0.35, 0.55, 0.75, 0.9].map { levels[min(levels.count - 1, Int(Double(levels.count - 1) * $0))] }
         return picks.map { UIColor(hue: tintH, saturation: tint, brightness: max(0.22, min(0.82, $0)), alpha: 1) }
+    }
+}
+
+/// Prosty generator liczb losowych z ziarnem: ta sama piosenka = ten sam układ kolorów tła.
+struct SeededRandom: RandomNumberGenerator {
+    private var state: UInt64
+
+    init(seed: UInt64) { state = seed == 0 ? 0x9E3779B97F4A7C15 : seed }
+
+    mutating func next() -> UInt64 {
+        state = state &* 6364136223846793005 &+ 1442695040888963407
+        var z = state
+        z = (z ^ (z >> 30)) &* 0xBF58476D1CE4E5B9
+        z = (z ^ (z >> 27)) &* 0x94D049BB133111EB
+        return z ^ (z >> 31)
     }
 }

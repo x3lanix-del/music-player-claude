@@ -204,8 +204,7 @@ struct MiniPlayerBar: View {
             .padding(.vertical, 8)
             .overlay(alignment: .bottom) {
                 if !t.isRadio {
-                    MiniProgress(clock: engine.clock,
-                                 tint: engine.vibe.map { Color(uiColor: $0) } ?? ink.opacity(0.55))
+                    MiniProgress(clock: engine.clock, tint: ink.opacity(0.55))
                         .padding(.horizontal, 22)
                         .padding(.bottom, 3)
                 }
@@ -230,7 +229,6 @@ private struct MiniProgress: View {
                 Capsule().fill(ink.opacity(0.12))
                 Capsule().fill(tint)
                     .frame(width: geo.size.width * CGFloat(f))
-                    .shadow(color: tint.opacity(0.6), radius: 3)
             }
         }
         .frame(height: 2.5)

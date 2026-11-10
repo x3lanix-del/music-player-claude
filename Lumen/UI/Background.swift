@@ -9,6 +9,8 @@ struct AnimatedBackground: View {
     var isActive: Bool = true
     var player: Bool = false
     @State private var blurred: UIImage? = nil
+    /// Kolory siatki tła (dominujące kolory okładki rozłożone na 4x4 pola).
+    @State private var mesh: [UIColor] = []
     /// Przyciemnienie dobrane do jasności okładki (jasna okładka = mocniej, żeby biały tekst był czytelny).
     @State private var shade: Double = 0.2
 
@@ -72,13 +74,13 @@ struct AnimatedBackground: View {
         }
     }
 
-    /// Tło z okładki jak w Apple Music: sama okładka, mocno rozmyta, w kilku wielkich warstwach, które powoli
-    /// obracają się i krążą - po ekranie płyną prawdziwe kolory i kształty okładki.
+    /// Tło jak w Apple Music: siatka dominujących kolorów okładki, płynnie przechodzących w siebie i powoli
+    /// falujących (iOS 18+: MeshGradient). Na iOS 17 - obracające się, rozmyte kopie okładki.
     private func colorful(size: CGSize) -> some View {
         ZStack {
             Color.black
             if blurred != nil {
-                ArtworkFlow(image: blurred, size: size, speed: max(0.25, settings.data.bgSpeed), paused: !isActive)
+                flow(size: size)
                     .frame(width: size.width, height: size.height)
                     .transition(.opacity)
             } else {
@@ -89,6 +91,22 @@ struct AnimatedBackground: View {
         }
     }
 
+    @ViewBuilder private func flow(size: CGSize) -> some View {
+        #if compiler(>=6.0)
+        if #available(iOS 18.0, *) {
+            if mesh.isEmpty {
+                ArtworkFlow(image: blurred, size: size, speed: max(0.25, settings.data.bgSpeed), paused: !isActive)
+            } else {
+                MeshFlow(colors: mesh, speed: max(0.25, settings.data.bgSpeed), paused: !isActive)
+            }
+        } else {
+            ArtworkFlow(image: blurred, size: size, speed: max(0.25, settings.data.bgSpeed), paused: !isActive)
+        }
+        #else
+        ArtworkFlow(image: blurred, size: size, speed: max(0.25, settings.data.bgSpeed), paused: !isActive)
+        #endif
+    }
+
     private func rebuild() async {
         guard player || settings.data.theme == .blur, let src = engine.artwork else {
             // Chwila przełączania piosenki (okładka jeszcze się ładuje): zostaje poprzednie tło, bez mignięcia czernią.
@@ -97,18 +115,110 @@ struct AnimatedBackground: View {
         }
         // Jak w Apple Music: warstwy to zwykła (ostra) okładka - rozmycie dzieje się dopiero po złożeniu warstw,
         // więc widać płynące kształty i prawdziwe kolory okładki (bez żadnego "poprawiania" barw).
-        let result = await Task.detached(priority: .utility) { () -> (UIImage, Double) in
+        let seed = LyricsProviders.stableID(engine.currentTrack?.id ?? "")
+        let result = await Task.detached(priority: .utility) { () -> (UIImage, Double, [UIColor]) in
             let small = ArtworkLoader.downscale(src, maxSide: 160)
-            return (small, ArtworkLoader.meanBrightness(of: small))
+            return (small, ArtworkLoader.meanBrightness(of: small), ArtworkLoader.meshColors(of: small, seed: seed))
         }.value
         // Jasna okładka dostaje trochę przyciemnienia pod biały tekst, ale tylko tyle, żeby kolor dalej był widać.
         let target = min(max(0.1 + (result.1 - 0.45) * 0.6, 0.1), 0.36)
         withAnimation(.easeInOut(duration: 1.0)) {
             blurred = result.0
             shade = target
+            mesh = result.2
         }
     }
 }
+
+#if compiler(>=6.0)
+/// Tło jak w Apple Music: siatka 4x4 punktów, każdy w jednym z dominujących kolorów okładki (tyle pól, ile koloru
+/// jest na okładce), kolory płynnie przechodzą w siebie (MeshGradient). Punkty wewnątrz i na brzegach powoli
+/// falują (każdy w swoim tempie), więc plamy kolorów płyną po ekranie; rogi stoją, więc ekran jest zawsze zakryty.
+/// Przy zmianie piosenki kolory przechodzą płynnie w nowe. 30 klatek/s, ekran nieaktywny = animacja stoi.
+@available(iOS 18.0, *)
+private struct MeshFlow: View {
+    let colors: [UIColor]
+    let speed: Double
+    let paused: Bool
+
+    private struct RGBA: Equatable {
+        var r: Double, g: Double, b: Double, a: Double
+    }
+
+    @State private var from: [RGBA] = []
+    @State private var to: [RGBA] = []
+    @State private var changedAt = Date.distantPast
+    private static let fade = 1.4
+    private static let side = 4
+
+    private static func rgba(_ c: UIColor) -> RGBA {
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        c.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return RGBA(r: Double(r), g: Double(g), b: Double(b), a: Double(a))
+    }
+
+    private static func fit(_ list: [RGBA]) -> [RGBA] {
+        let n = side * side
+        guard !list.isEmpty else { return Array(repeating: RGBA(r: 0.2, g: 0.2, b: 0.2, a: 1), count: n) }
+        return (0..<n).map { list[$0 % list.count] }
+    }
+
+    /// Kolory w danej chwili (w trakcie zmiany piosenki: mieszanka starych i nowych).
+    private func palette(at date: Date) -> [Color] {
+        let target = MeshFlow.fit(to.isEmpty ? colors.map(MeshFlow.rgba) : to)
+        var out = target
+        if !from.isEmpty {
+            let p = min(max(date.timeIntervalSince(changedAt) / MeshFlow.fade, 0), 1)
+            if p < 1 {
+                let e = p * p * (3 - 2 * p)
+                let start = MeshFlow.fit(from)
+                out = zip(start, target).map { a, b in
+                    RGBA(r: a.r + (b.r - a.r) * e, g: a.g + (b.g - a.g) * e,
+                         b: a.b + (b.b - a.b) * e, a: a.a + (b.a - a.a) * e)
+                }
+            }
+        }
+        return out.map { Color(.sRGB, red: $0.r, green: $0.g, blue: $0.b, opacity: $0.a) }
+    }
+
+    /// Położenie punktów siatki w chwili `t` (0...1). Rogi stoją, brzegi suwają się wzdłuż krawędzi, środek faluje.
+    private static func points(t: Double) -> [SIMD2<Float>] {
+        var out: [SIMD2<Float>] = []
+        let last = side - 1
+        for row in 0..<side {
+            for col in 0..<side {
+                var x = Double(col) / Double(last)
+                var y = Double(row) / Double(last)
+                let phase = Double(row * side + col) * 1.37
+                let innerX = col > 0 && col < last
+                let innerY = row > 0 && row < last
+                if innerX { x += 0.14 * sin(t / (3.1 + Double(row) * 0.6) + phase) }
+                if innerY { y += 0.14 * cos(t / (3.7 + Double(col) * 0.5) + phase * 0.8) }
+                out.append(SIMD2<Float>(Float(x), Float(y)))
+            }
+        }
+        return out
+    }
+
+    var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: paused)) { tl in
+            let t = tl.date.timeIntervalSinceReferenceDate * speed
+            MeshGradient(width: MeshFlow.side, height: MeshFlow.side,
+                         points: MeshFlow.points(t: t),
+                         colors: palette(at: tl.date),
+                         smoothsColors: true)
+                .saturation(1.12)
+        }
+        .onAppear { to = colors.map(MeshFlow.rgba) }
+        .onChange(of: colors) { _, new in
+            let now = Date()
+            from = palette(at: now).map { MeshFlow.rgba(UIColor($0)) }
+            to = new.map(MeshFlow.rgba)
+            changedAt = now
+        }
+    }
+}
+#endif
 
 /// Ruchome tło z okładki jak w Apple Music: kilka kopii okładki (różne rozmiary, jedna wielka pod spodem) krąży
 /// i obraca się w różnych tempach i kierunkach, a dopiero potem całość jest mocno rozmyta i lekko nasycona -
