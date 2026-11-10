@@ -1,3 +1,11 @@
+## 1.34.0 - tło dokładnie jak w repozytorium „Apple Music Background”
+- Tło zrobione techniką z repozytorium frigopedro/Apple-Music-Background: z okładki 5 dominujących kolorów,
+  siatka pól (5 x 7), każde pole losowo jednym z tych kolorów, a na wierzchu bardzo mocne rozmycie (ok. 90 pt)
+  i czarna warstwa 30% - efekt matowego szkła jak w Apple Music. Układ pól jest stały dla danej piosenki.
+- Żeby tło żyło jak w Apple Music: co kilka sekund kilka pól płynnie zmienia kolor (tempo: Ustawienia →
+  Tempo animacji tła). Przy zmianie piosenki kolory płynnie przechodzą w nowe.
+- Działa tak samo na iOS 17 i 18+. Rozmycie liczone w 1/8 rozdzielczości, więc prawie nie obciąża telefonu.
+
 ## 1.33.0 - tło z siatki kolorów (jak w Apple Music)
 - Nowe tło (iOS 18+): z okładki wybieranych jest 5 dominujących kolorów (także szarości i czerni - w takich
   proporcjach, w jakich są na okładce), które trafiają losowo - ale dla danej piosenki zawsze tak samo - na
