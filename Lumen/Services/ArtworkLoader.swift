@@ -157,6 +157,32 @@ final class ArtworkLoader {
         return min(max(0.4 / s, 1.08), 2.2)
     }
 
+    /// Kolor "klimatu" piosenki prosto z okładki - ale tylko wtedy, gdy jakiś kolor naprawdę na niej dominuje
+    /// (co najmniej 18% obrazka). Mały kolorowy element na szarej okładce (np. niebieskie logo) nie barwi już
+    /// aplikacji na niebiesko. Kolor jest rozjaśniony, żeby świecił na ciemnym tle. nil = biały.
+    static func vibe(of image: UIImage) -> UIColor? {
+        let all = samples(image)
+        guard !all.isEmpty else { return nil }
+        func distance(_ a: Sample, _ b: Sample) -> CGFloat {
+            let dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b
+            return (dr * dr + dg * dg + db * db).squareRoot()
+        }
+        var groups: [(first: Sample, r: CGFloat, g: CGFloat, b: CGFloat, count: Int)] = []
+        for px in all where px.colorful {
+            if let i = groups.firstIndex(where: { distance($0.first, px) <= 0.3 }) {
+                groups[i].r += px.r; groups[i].g += px.g; groups[i].b += px.b; groups[i].count += 1
+            } else {
+                groups.append((px, px.r, px.g, px.b, 1))
+            }
+        }
+        guard let top = groups.max(by: { $0.count < $1.count }),
+              Double(top.count) / Double(all.count) >= 0.18 else { return nil }
+        let n = CGFloat(top.count)
+        var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+        UIColor(red: top.r / n, green: top.g / n, blue: top.b / n, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &a)
+        return UIColor(hue: h, saturation: min(max(s * 1.15, 0.35), 0.8), brightness: max(v, 0.9), alpha: 1)
+    }
+
     /// Kolor "klimatu" piosenki: najbardziej wyrazisty z palety okładki, rozjaśniony tak, żeby świecił na ciemnym tle.
     /// nil = okładka szara / czarno-biała (wtedy aplikacja używa zwykłego białego).
     static func vibe(from palette: [UIColor]) -> UIColor? {

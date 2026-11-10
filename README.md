@@ -1,3 +1,14 @@
+## 1.32.0 - tło jak w Apple Music
+- Tło zrobione tak, jak robi to Apple Music: pięć kopii **ostrej** okładki (jedna wielka pod spodem, cztery mniejsze
+  w rogach) krąży i obraca się w różnych tempach i kierunkach, a **dopiero potem** całość jest mocno rozmyta
+  i lekko nasycona. Wcześniej okładka była rozmywana przed obracaniem, więc zostawała jednolita plama i ruchu
+  nie było widać. Teraz po ekranie płyną prawdziwe kolory i kształty okładki.
+- Kolory tła są dokładnie z okładki (bez „poprawiania” barw): szara okładka z odrobiną niebieskiego nie robi się
+  już niebieska.
+- Kolor klimatu (poświata, pasek postępu, świecący tekst) tylko wtedy, gdy jakiś kolor naprawdę dominuje na okładce;
+  mały kolorowy element na szarej okładce nie barwi już aplikacji.
+- Rozmycie liczone w 1/6 rozdzielczości, więc mimo ruchu tło prawie nie obciąża telefonu.
+
 ## 1.31.0 - więcej klimatu
 - **Kolory tła pasują do okładki:** pastelowe okładki (np. jasny róż, błękit) nie wychodzą już na biało / szaro -
   tło dostaje tyle nasycenia, żeby było w kolorze okładki; szare okładki dalej są szare. Jasne okładki są

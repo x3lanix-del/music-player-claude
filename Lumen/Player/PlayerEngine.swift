@@ -728,7 +728,7 @@ final class PlayerEngine: ObservableObject {
             self.artwork = img
             self.artworkTrackID = track.id
             self.palette = ArtworkLoader.palette(from: img)
-            self.vibe = ArtworkLoader.vibe(from: self.palette)
+            self.vibe = ArtworkLoader.vibe(of: img)
             self.nowPlayingArtwork = NowPlayingArtwork.make(img)
             self.updateNowPlaying()
         }
@@ -973,7 +973,7 @@ final class PlayerEngine: ObservableObject {
             self.artwork = image
             self.artworkTrackID = image == nil ? nil : track.id
             self.palette = image.map { ArtworkLoader.palette(from: $0) } ?? []
-            self.vibe = ArtworkLoader.vibe(from: self.palette)
+            self.vibe = image.flatMap { ArtworkLoader.vibe(of: $0) }
             self.nowPlayingArtwork = image.map { NowPlayingArtwork.make($0) }
             self.updateNowPlaying()
         }

@@ -8,8 +8,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.31.0"
-    CURRENT_PROJECT_VERSION: "64"
+    MARKETING_VERSION: "1.32.0"
+    CURRENT_PROJECT_VERSION: "65"
     YOUTUBE_API_KEY: "AIzaSyCLBVuBjpMfqvQ2xzUlSpxqoGzDuD33g_M"
     PLAYLISTS_URL: "https://bsggfvsibyjsvoitvgpt.supabase.co"
     PLAYLISTS_KEY: "sb_publishable_AgeVrH5mEtBb1O_5f90YOg_fdsR-ViZ"
