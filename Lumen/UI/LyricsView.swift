@@ -247,6 +247,8 @@ private struct LyricRowView: View, Equatable {
     /// Fala liter w aktywnej linijce.
     let karaoke: Bool
     let playing: Bool
+    /// Kolor poświaty śpiewanej linijki (kolor okładki).
+    let glow: Color
     let engine: PlayerEngine
     let lyrics: LyricsController
     let onTap: () -> Void
@@ -255,7 +257,7 @@ private struct LyricRowView: View, Equatable {
         l.row == r.row && l.level == r.level && l.fontSize == r.fontSize
             && l.translation == r.translation && l.seekable == r.seekable
             && l.blur == r.blur && l.karaoke == r.karaoke
-            && (l.level != 0 || l.playing == r.playing)
+            && (l.level != 0 || (l.playing == r.playing && l.glow == r.glow))
     }
 
     /// Przerwa dość długa, żeby pokazać kropki (krótkie puste linijki to tylko odstęp).
@@ -273,7 +275,9 @@ private struct LyricRowView: View, Equatable {
                     Color.clear.frame(maxWidth: .infinity).frame(height: fontSize * 0.5)
                 }
             } else {
+                // Śpiewana linijka lekko świeci w kolorze okładki.
                 lineText
+                    .shadow(color: level == 0 ? glow.opacity(0.55) : .clear, radius: level == 0 ? 14 : 0)
             }
             if let tr = translation, !tr.isEmpty, !row.chars.isEmpty, tr.lowercased() != row.text.lowercased() {
                 Text(tr)
@@ -535,6 +539,7 @@ struct LyricsView: View {
         // Rozmycie dalszych linijek i fala liter są zawsze włączone (bez przełączników w Ustawieniach).
         let blur = !browsing
         let playing = engine.isPlaying
+        let glow = engine.vibe.map { Color(uiColor: $0) } ?? lyricsInk
         return ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 26) {
@@ -549,6 +554,7 @@ struct LyricsView: View {
                                      blur: blur,
                                      karaoke: false,
                                      playing: playing,
+                                     glow: glow,
                                      engine: engine,
                                      lyrics: lyrics) {
                             engine.seek(to: 0)
@@ -565,6 +571,7 @@ struct LyricsView: View {
                                      blur: blur,
                                      karaoke: true,
                                      playing: playing,
+                                     glow: glow,
                                      engine: engine,
                                      lyrics: lyrics) {
                             resumeTask?.cancel()

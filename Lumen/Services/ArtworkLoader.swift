@@ -96,7 +96,9 @@ final class ArtworkLoader {
     private struct Sample {
         var r: CGFloat; var g: CGFloat; var b: CGFloat
         var h: CGFloat; var s: CGFloat; var v: CGFloat
-        var colorful: Bool { v > 0.16 && s > 0.22 }
+        /// Kolor, nie szarość: liczy się "chroma" (nasycenie × jasność), więc pastelowy róż jest kolorem,
+        /// a szum kompresji na szarym / ciemnym obrazku - nie.
+        var colorful: Bool { v > 0.16 && s > 0.12 && s * v > 0.07 }
     }
 
     /// Próbki z siatki 12x12 (cały obraz, bez kadrowania).
@@ -135,8 +137,41 @@ final class ArtworkLoader {
         let all = samples(image)
         guard !all.isEmpty else { return 0 }
         let meanS = all.reduce(0) { $0 + $1.s } / CGFloat(all.count)
-        guard meanS > 0.08 else { return 0 }
+        guard meanS > 0.05 else { return 0 }
         return Double(all.filter { $0.colorful }.count) / Double(all.count)
+    }
+
+    /// Średnie nasycenie jasnych pikseli (ciemne piksele mają przypadkowe nasycenie) - 0 = szara okładka.
+    static func meanSaturation(of image: UIImage) -> Double {
+        let lit = samples(image).filter { $0.v > 0.2 }
+        guard !lit.isEmpty else { return 0 }
+        return Double(lit.reduce(0) { $0 + $1.s } / CGFloat(lit.count))
+    }
+
+    /// O ile podbić nasycenie tła, żeby wyglądało jak okładka: szara zostaje szara (×1), pastelowa (np. jasny róż)
+    /// dostaje mocniej, żeby po rozmyciu i przyciemnieniu dalej była różowa, a nie biała / szara; mocno kolorowa
+    /// prawie bez zmian (bez przesady).
+    static func backgroundSaturation(of image: UIImage) -> Double {
+        let s = meanSaturation(of: image)
+        guard s > 0.05 else { return 1.0 }
+        return min(max(0.4 / s, 1.08), 2.2)
+    }
+
+    /// Kolor "klimatu" piosenki: najbardziej wyrazisty z palety okładki, rozjaśniony tak, żeby świecił na ciemnym tle.
+    /// nil = okładka szara / czarno-biała (wtedy aplikacja używa zwykłego białego).
+    static func vibe(from palette: [UIColor]) -> UIColor? {
+        var best: UIColor? = nil
+        var bestScore: CGFloat = 0
+        for c in palette {
+            var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+            guard c.getHue(&h, saturation: &s, brightness: &v, alpha: &a), s > 0.12 else { continue }
+            let score = s * 0.8 + v * 0.2
+            if score > bestScore { bestScore = score; best = c }
+        }
+        guard let pick = best else { return nil }
+        var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+        pick.getHue(&h, saturation: &s, brightness: &v, alpha: &a)
+        return UIColor(hue: h, saturation: min(max(s * 1.3, 0.45), 0.85), brightness: max(v, 0.92), alpha: 1)
     }
 
     /// Do 5 kolorów tła, w takich proporcjach, w jakich naprawdę są na okładce:
@@ -152,7 +187,7 @@ final class ArtworkLoader {
         let neutral = all.filter { !$0.colorful }
         let share = CGFloat(colorful.count) / k
         let meanS = all.reduce(0) { $0 + $1.s } / k
-        guard meanS > 0.08, share >= 0.12 else { return grayPalette(from: neutral.isEmpty ? all : neutral) }
+        guard meanS > 0.05, share >= 0.08 else { return grayPalette(from: neutral.isEmpty ? all : neutral) }
 
         func distance(_ a: Sample, _ b: Sample) -> CGFloat {
             let dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b
@@ -177,8 +212,9 @@ final class ArtworkLoader {
             let n = CGFloat(g.count)
             var h: CGFloat = 0, sat: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
             UIColor(red: g.r / n, green: g.g / n, blue: g.b / n, alpha: 1).getHue(&h, saturation: &sat, brightness: &v, alpha: &a)
-            // Tylko lekka korekta, żeby plamy było widać na ciemnym tle - odcień i nasycenie zostają z okładki.
-            return UIColor(hue: h, saturation: min(1, sat * 1.05), brightness: max(v, 0.38), alpha: 1)
+            // Tylko lekka korekta, żeby kolor było widać na ciemnym tle - odcień zostaje z okładki,
+            // a pastele (jasny róż, błękit) dostają trochę więcej nasycenia, żeby nie wyszły na biało.
+            return UIColor(hue: h, saturation: min(1, max(sat * 1.05, min(sat * 1.8, 0.35))), brightness: max(v, 0.38), alpha: 1)
         }
         if out.count < 5, share < 0.85, !neutral.isEmpty {
             let grays = grayPalette(from: neutral)

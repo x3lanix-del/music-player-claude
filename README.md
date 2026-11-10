@@ -1,3 +1,18 @@
+## 1.31.0 - więcej klimatu
+- **Kolory tła pasują do okładki:** pastelowe okładki (np. jasny róż, błękit) nie wychodzą już na biało / szaro -
+  tło dostaje tyle nasycenia, żeby było w kolorze okładki; szare okładki dalej są szare. Jasne okładki są
+  przyciemniane delikatniej, żeby kolor był widać.
+- **Kolor klimatu piosenki:** z okładki wybierany jest jej najbardziej wyrazisty kolor. W nim świeci duża okładka
+  (poświata), pasek postępu, śpiewana linijka tekstu, pulsująca poświata pod przyciskiem play i pasek
+  w mini-odtwarzaczu. Przy zmianie piosenki kolory płynnie się zmieniają. (Własny kolor akcentu z Ustawień
+  ma pierwszeństwo.)
+- **Polubienie:** serduszka wylatują w górę + wibracja „udało się”.
+- **Wibracje:** play/pauza, następna/poprzednia, start piosenki z listy.
+- **Główna:** przycisk „Zaskocz mnie” (losowy miks 30 piosenek z ostatnio granych, ulubionych i list na czasie,
+  z turlającą się kostką), powitanie w kolorze grającej piosenki, złoty / srebrny / brązowy numer dla podium
+  „Na czasie w Polsce” z koroną dla numeru 1.
+- Usunięty testowy workflow „Runner check”.
+
 ## 1.30.0
 - **Nowa zakładka Główna** (pierwsza na pasku): „Ostatnio grane”, „Na czasie w Polsce” (top 20 teledysków
   muzycznych z YouTube, przez YouTube Data API v3) i „Na czasie na świecie”. Listy zapisują się na dysku (są od razu,

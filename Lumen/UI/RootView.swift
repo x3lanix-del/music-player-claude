@@ -154,6 +154,9 @@ struct MiniPlayerBar: View {
                         RadioIcon(station: engine.currentStation, size: 44, radius: 10, active: engine.isPlaying)
                     } else {
                         ArtworkView(size: 44, radius: 10)
+                            .shadow(color: (engine.vibe.map { Color(uiColor: $0) } ?? .clear).opacity(engine.isPlaying ? 0.6 : 0),
+                                    radius: 8)
+                            .animation(.easeInOut(duration: 0.6), value: engine.isPlaying)
                     }
                     VStack(alignment: .leading, spacing: 2) {
                         // Radio: ikona stacji, a obok tytuł grającego utworu (jeśli stacja go podaje).
@@ -201,7 +204,8 @@ struct MiniPlayerBar: View {
             .padding(.vertical, 8)
             .overlay(alignment: .bottom) {
                 if !t.isRadio {
-                    MiniProgress(clock: engine.clock)
+                    MiniProgress(clock: engine.clock,
+                                 tint: engine.vibe.map { Color(uiColor: $0) } ?? ink.opacity(0.55))
                         .padding(.horizontal, 22)
                         .padding(.bottom, 3)
                 }
@@ -217,14 +221,16 @@ struct MiniPlayerBar: View {
 private struct MiniProgress: View {
     @Environment(\.ink) private var ink
     @ObservedObject var clock: PlaybackClock
+    var tint: Color
 
     var body: some View {
         GeometryReader { geo in
             let f = clock.duration > 0 ? min(max(clock.time / clock.duration, 0), 1) : 0
             ZStack(alignment: .leading) {
                 Capsule().fill(ink.opacity(0.12))
-                Capsule().fill(ink.opacity(0.55))
+                Capsule().fill(tint)
                     .frame(width: geo.size.width * CGFloat(f))
+                    .shadow(color: tint.opacity(0.6), radius: 3)
             }
         }
         .frame(height: 2.5)

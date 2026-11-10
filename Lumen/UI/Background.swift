@@ -95,17 +95,17 @@ struct AnimatedBackground: View {
             if engine.currentTrack == nil { blurred = nil }
             return
         }
-        // Nasycenie zależy od tego, ile koloru naprawdę jest na okładce: szara zostaje szara, kolorowa jest żywa.
+        // Nasycenie dobrane do okładki: szara zostaje szara (bez podbijania szumu), pastelowa (np. jasny róż)
+        // dostaje mocniej, żeby tło było różowe, a nie białe; kolorowa prawie bez zmian. Nigdy nie odbarwiamy.
         let result = await Task.detached(priority: .utility) { () -> (UIImage?, Double) in
-            let colorful = ArtworkLoader.colorfulness(of: src)
-            let image = ArtworkLoader.blurred(src, radius: 9, saturation: colorful < 0.12 ? 0.3 : 1.05 + 0.5 * colorful,
-                                              maxSide: 120)
+            let saturation = ArtworkLoader.backgroundSaturation(of: src)
+            let image = ArtworkLoader.blurred(src, radius: 9, saturation: saturation, maxSide: 120)
             let light = image.map { ArtworkLoader.meanBrightness(of: $0) } ?? 0.4
             return (image, light)
         }.value
         guard let image = result.0 else { return }
-        // Jasna okładka (np. biała / różowa) dostaje mocniejsze przyciemnienie, ciemna prawie żadnego.
-        let target = min(max(0.14 + (result.1 - 0.4) * 0.75, 0.14), 0.55)
+        // Jasna okładka dostaje trochę przyciemnienia pod biały tekst, ale tylko tyle, żeby kolor dalej był widać.
+        let target = min(max(0.12 + (result.1 - 0.45) * 0.6, 0.12), 0.38)
         withAnimation(.easeInOut(duration: 1.0)) {
             blurred = image
             shade = target

@@ -102,8 +102,14 @@ struct NowPlayingView: View {
     @State private var showDevices = false
     @State private var prevTaps = 0
     @State private var nextTaps = 0
+    @State private var likeBursts = 0
 
     private var isFav: Bool { engine.currentTrack.map { library.isFavorite($0) } ?? false }
+
+    /// Kolor "klimatu" piosenki z okładki (szara okładka = zwykły kolor tekstu).
+    private var vibe: Color { engine.vibe.map { Color(uiColor: $0) } ?? ink }
+    /// Własny kolor akcentu z Ustawień ma pierwszeństwo przed kolorem z okładki.
+    private var progressTint: Color { settings.data.accentHex.isEmpty ? vibe : accentInk }
 
     var body: some View {
         ZStack {
@@ -124,6 +130,8 @@ struct NowPlayingView: View {
                 }
 
                 ProgressSection(clock: engine.clock, seek: { engine.seek(to: $0) })
+                    .environment(\.accentInk, progressTint)
+                    .animation(.easeInOut(duration: 0.8), value: engine.vibe)
                     .padding(.top, 6)
                 controls
                 VolumeRow().padding(.bottom, 14)
@@ -205,6 +213,7 @@ struct NowPlayingView: View {
                 HStack(spacing: 14) {
                     ArtworkView(size: 72, radius: 12, track: shownTrack)
                         .shadow(color: .black.opacity(0.35), radius: 10, y: 4)
+                        .shadow(color: vibe.opacity(engine.vibe == nil ? 0 : 0.5), radius: 16)
                     titleBlock(shownTrack)
                 }
                 .id(shownID)
@@ -234,6 +243,8 @@ struct NowPlayingView: View {
             ZStack {
                 ArtworkView(size: 310, radius: 22, track: shownTrack)
                     .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
+                    // Poświata w kolorze okładki - jakby okładka świeciła.
+                    .shadow(color: vibe.opacity(engine.vibe == nil ? 0 : 0.55), radius: 40)
                     .id(shownID)
                     .transition(slide)
             }
@@ -315,6 +326,7 @@ struct NowPlayingView: View {
             Spacer()
             Button {
                 prevTaps += 1
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 engine.previous()
             } label: {
                 Image(systemName: "backward.fill").font(.system(size: 34)).foregroundStyle(ink)
@@ -323,8 +335,13 @@ struct NowPlayingView: View {
                     .contentShape(Rectangle())
             }
             Spacer()
-            Button { engine.togglePlayPause() } label: {
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                engine.togglePlayPause()
+            } label: {
                 ZStack {
+                    // Miękko pulsująca poświata w kolorze okładki, gdy muzyka gra.
+                    PlayPulse(color: vibe, active: engine.isPlaying)
                     if engine.wantsPlaying && engine.isBuffering && !engine.isPlaying {
                         ProgressView().tint(accentInk).scaleEffect(1.4)
                     } else {
@@ -340,6 +357,7 @@ struct NowPlayingView: View {
             Spacer()
             Button {
                 nextTaps += 1
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 engine.next()
             } label: {
                 Image(systemName: "forward.fill").font(.system(size: 34)).foregroundStyle(ink)
@@ -369,8 +387,15 @@ struct NowPlayingView: View {
             Spacer()
             Button {
                 if let t = engine.currentTrack {
+                    let liking = !library.isFavorite(t)
                     library.toggleFavorite(t)
-                    UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    if liking {
+                        // Polubienie: serduszka wylatują w górę + "udało się" pod palcem.
+                        likeBursts += 1
+                        UINotificationFeedbackGenerator().notificationOccurred(.success)
+                    } else {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                    }
                 }
             } label: {
                 Image(systemName: isFav ? "heart.fill" : "heart")
@@ -382,6 +407,7 @@ struct NowPlayingView: View {
                     .frame(width: 52, height: 52)
                     .glass(Circle(), interactive: true)
                     .contentShape(Circle())
+                    .overlay { HeartBurst(trigger: likeBursts) }
             }
             .buttonStyle(.plain)
             Spacer()
@@ -456,6 +482,79 @@ struct QueueSheet: View {
         case .all: return "Powtarzaj wszystko"
         case .one: return "Powtarzaj jedną"
         }
+    }
+}
+
+/// Miękka, oddychająca poświata pod przyciskiem play (w kolorze okładki), widoczna tylko gdy muzyka gra.
+struct PlayPulse: View {
+    let color: Color
+    let active: Bool
+    @State private var breathe = false
+
+    var body: some View {
+        Circle()
+            .fill(RadialGradient(colors: [color.opacity(0.4), color.opacity(0)],
+                                 center: .center, startRadius: 6, endRadius: 56))
+            .frame(width: 112, height: 112)
+            .scaleEffect(active ? (breathe ? 1.12 : 0.9) : 0.6)
+            .opacity(active ? 1 : 0)
+            .animation(.easeInOut(duration: 1.7).repeatForever(autoreverses: true), value: breathe)
+            .animation(.easeOut(duration: 0.45), value: active)
+            .onAppear { breathe = true }
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
+    }
+}
+
+/// Wybuch serduszek przy polubieniu piosenki: kilka serc wylatuje w górę i znika.
+struct HeartBurst: View {
+    let trigger: Int
+
+    struct Particle: Identifiable {
+        let id = UUID()
+        let dx: CGFloat
+        let rise: CGFloat
+        let size: CGFloat
+        let spin: Double
+        let delay: Double
+    }
+
+    @State private var particles: [Particle] = []
+
+    var body: some View {
+        ZStack {
+            ForEach(particles) { p in
+                HeartParticle(p: p)
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .onChange(of: trigger) { _, _ in
+            particles = (0..<9).map { _ in
+                Particle(dx: CGFloat.random(in: -44...44), rise: CGFloat.random(in: 55...120),
+                         size: CGFloat.random(in: 9...19), spin: Double.random(in: -35...35),
+                         delay: Double.random(in: 0...0.12))
+            }
+        }
+    }
+}
+
+private struct HeartParticle: View {
+    let p: HeartBurst.Particle
+    @State private var flying = false
+
+    var body: some View {
+        Image(systemName: "heart.fill")
+            .font(.system(size: p.size, weight: .bold))
+            .foregroundStyle(LinearGradient(colors: [Color(red: 1, green: 0.35, blue: 0.5), Color.red],
+                                            startPoint: .top, endPoint: .bottom))
+            .rotationEffect(.degrees(flying ? p.spin : 0))
+            .scaleEffect(flying ? 1 : 0.3)
+            .offset(x: flying ? p.dx : 0, y: flying ? -p.rise : 0)
+            .opacity(flying ? 0 : 1)
+            .onAppear {
+                withAnimation(.easeOut(duration: 0.95).delay(p.delay)) { flying = true }
+            }
     }
 }
 

@@ -70,6 +70,7 @@ struct HomeView: View {
     @EnvironmentObject var toast: ToastCenter
     @ObservedObject var model: HomeModel
     @State private var batch: TrackBatch? = nil
+    @State private var diceRolls = 0
 
     private var greeting: String {
         switch Calendar.current.component(.hour, from: Date()) {
@@ -90,9 +91,14 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 26) {
                     Text(greeting)
                         .font(.system(size: 17, weight: .semibold))
-                        .foregroundStyle(ink.opacity(0.65))
+                        .foregroundStyle(LinearGradient(colors: [vibe, ink.opacity(0.65)],
+                                                        startPoint: .leading, endPoint: .trailing))
                         .padding(.horizontal, 20)
                         .padding(.top, -10)
+                        .animation(.easeInOut(duration: 0.8), value: engine.vibe)
+
+                    surpriseButton
+                        .padding(.horizontal, 20)
 
                     if !recent.isEmpty {
                         section("Ostatnio grane", icon: "clock.arrow.circlepath") { cards(recent) }
@@ -115,6 +121,71 @@ struct HomeView: View {
                 .environmentObject(library)
                 .environmentObject(toast)
                 .preferredColorScheme(settings.colorScheme)
+        }
+    }
+
+    /// Kolor grającej piosenki (z okładki), a gdy nic nie gra / okładka szara - zwykły kolor tekstu.
+    private var vibe: Color { engine.vibe.map { Color(uiColor: $0) } ?? ink }
+
+    /// Wszystko, z czego da się ułożyć losowy miks: ostatnio grane, ulubione i listy "na czasie" (bez powtórzeń).
+    private var mixPool: [Track] {
+        let favorites = library.playlist(LibraryStore.favoritesID)?.tracks ?? []
+        var seen = Set<String>()
+        return (engine.recent + favorites + model.poland + model.world).filter { seen.insert($0.id).inserted }
+    }
+
+    /// „Zaskocz mnie”: losowy miks 30 piosenek, kostka się turla, telefon "klika".
+    private var surpriseButton: some View {
+        Button {
+            let pool = mixPool
+            guard !pool.isEmpty else {
+                toast.show("Najpierw posłuchaj czegoś albo przeciągnij w dół, żeby wczytać listy.")
+                return
+            }
+            diceRolls += 1
+            UINotificationFeedbackGenerator().notificationOccurred(.success)
+            engine.play(Array(pool.shuffled().prefix(30)), startAt: 0)
+            toast.show("Losowy miks: \(Pl.songs(min(pool.count, 30)))")
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "dice.fill")
+                    .font(.system(size: 22, weight: .bold))
+                    .rotationEffect(.degrees(Double(diceRolls) * 360))
+                    .animation(.spring(response: 0.6, dampingFraction: 0.55), value: diceRolls)
+                    .symbolEffect(.bounce, value: diceRolls)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Zaskocz mnie")
+                        .font(.system(size: 17, weight: .bold))
+                    Text("Losowy miks z tego, co lubisz i co jest na czasie")
+                        .font(.system(size: 12, weight: .medium))
+                        .opacity(0.7)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 0)
+                Image(systemName: "play.fill")
+                    .font(.system(size: 16, weight: .bold))
+            }
+            .foregroundStyle(ink)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 14)
+            .background(
+                LinearGradient(colors: [vibe.opacity(0.35), vibe.opacity(0.08)],
+                               startPoint: .topLeading, endPoint: .bottomTrailing),
+                in: RoundedRectangle(cornerRadius: 22, style: .continuous)
+            )
+            .glass(RoundedRectangle(cornerRadius: 22, style: .continuous), interactive: true)
+            .animation(.easeInOut(duration: 0.8), value: engine.vibe)
+        }
+        .buttonStyle(PressScaleStyle(scale: 0.96))
+    }
+
+    /// Medale dla podium listy "na czasie".
+    private func rankColor(_ index: Int) -> Color {
+        switch index {
+        case 0: return Color(red: 1.0, green: 0.8, blue: 0.25)
+        case 1: return Color(red: 0.82, green: 0.85, blue: 0.9)
+        case 2: return Color(red: 0.86, green: 0.55, blue: 0.3)
+        default: return ink.opacity(0.5)
         }
     }
 
@@ -198,10 +269,18 @@ struct HomeView: View {
             VStack(spacing: 4) {
                 ForEach(Array(tracks.enumerated()), id: \.element.id) { index, t in
                     HStack(spacing: 8) {
-                        Text("\(index + 1)")
-                            .font(.system(size: 15, weight: .bold).monospacedDigit())
-                            .foregroundStyle(ink.opacity(index < 3 ? 0.9 : 0.5))
-                            .frame(width: 26)
+                        VStack(spacing: 0) {
+                            if index == 0 {
+                                Image(systemName: "crown.fill")
+                                    .font(.system(size: 10, weight: .bold))
+                                    .foregroundStyle(rankColor(0))
+                            }
+                            Text("\(index + 1)")
+                                .font(.system(size: index < 3 ? 18 : 15, weight: .heavy).monospacedDigit())
+                                .foregroundStyle(rankColor(index))
+                                .shadow(color: index < 3 ? rankColor(index).opacity(0.6) : .clear, radius: 6)
+                        }
+                        .frame(width: 28)
                         TrackRow(track: t,
                                  isCurrent: engine.currentTrack?.id == t.id,
                                  onPlay: { engine.play(tracks, startAt: index) },

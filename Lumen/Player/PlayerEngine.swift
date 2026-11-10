@@ -46,6 +46,8 @@ final class PlayerEngine: ObservableObject {
     /// Piosenka, do której należy `artwork` (przy przełączaniu stara okładka nie może trafić do nowej piosenki).
     @Published private(set) var artworkTrackID: String? = nil
     @Published private(set) var palette: [UIColor] = []
+    /// Kolor "klimatu" grającej piosenki (z okładki): poświata, pasek postępu, świecący tekst. nil = szara okładka.
+    @Published private(set) var vibe: UIColor? = nil
     @Published private(set) var shuffle = false
     @Published private(set) var playbackRate: Double = 1
     private var keepPitch = true
@@ -289,6 +291,7 @@ final class PlayerEngine: ObservableObject {
 
     func play(_ tracks: [Track], startAt index: Int, shuffled: Bool = false) {
         guard !tracks.isEmpty else { return }
+        UIImpactFeedbackGenerator(style: .soft).impactOccurred()
         isRadio = false
         radioURLs = [:]
         queue = tracks
@@ -725,6 +728,7 @@ final class PlayerEngine: ObservableObject {
             self.artwork = img
             self.artworkTrackID = track.id
             self.palette = ArtworkLoader.palette(from: img)
+            self.vibe = ArtworkLoader.vibe(from: self.palette)
             self.nowPlayingArtwork = NowPlayingArtwork.make(img)
             self.updateNowPlaying()
         }
@@ -969,6 +973,7 @@ final class PlayerEngine: ObservableObject {
             self.artwork = image
             self.artworkTrackID = image == nil ? nil : track.id
             self.palette = image.map { ArtworkLoader.palette(from: $0) } ?? []
+            self.vibe = ArtworkLoader.vibe(from: self.palette)
             self.nowPlayingArtwork = image.map { NowPlayingArtwork.make($0) }
             self.updateNowPlaying()
         }
