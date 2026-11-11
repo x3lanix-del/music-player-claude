@@ -1,12 +1,10 @@
 import UIKit
-import CoreImage
 
-/// Downloads YouTube thumbnails, crops them to a square and builds blurred backgrounds.
+/// Downloads YouTube thumbnails, crops them to a square and picks the background colours from them.
 final class ArtworkLoader {
     static let shared = ArtworkLoader()
 
     private let cache = NSCache<NSString, UIImage>()
-    private static let ciContext = CIContext(options: nil)
 
     /// Okładka z pamięci (bez czekania i bez sieci) - np. dla piosenki, która właśnie odjeżdża w animacji.
     func cached(_ id: String) -> UIImage? { cache.object(forKey: id as NSString) }
@@ -61,24 +59,6 @@ final class ArtworkLoader {
         return UIImage(cgImage: cropped)
     }
 
-    /// Small, pre-blurred, saturated copy used by the animated background.
-    static func blurred(_ image: UIImage, radius: Double, saturation: Double = 1.45, maxSide: CGFloat = 64) -> UIImage? {
-        let small = downscale(image, maxSide: maxSide)
-        guard let input = CIImage(image: small) else { return nil }
-        let extent = input.extent
-        guard let blur = CIFilter(name: "CIGaussianBlur") else { return nil }
-        blur.setValue(input.clampedToExtent(), forKey: kCIInputImageKey)
-        blur.setValue(radius, forKey: kCIInputRadiusKey)
-        guard var out = blur.outputImage?.cropped(to: extent) else { return nil }
-        if let color = CIFilter(name: "CIColorControls") {
-            color.setValue(out, forKey: kCIInputImageKey)
-            color.setValue(saturation, forKey: kCIInputSaturationKey)
-            if let o = color.outputImage { out = o }
-        }
-        guard let cg = ciContext.createCGImage(out, from: extent) else { return nil }
-        return UIImage(cgImage: cg)
-    }
-
     static func downscale(_ image: UIImage, maxSide: CGFloat) -> UIImage {
         let w = image.size.width
         let h = image.size.height
@@ -101,10 +81,9 @@ final class ArtworkLoader {
         var colorful: Bool { v > 0.16 && s > 0.12 && s * v > 0.07 }
     }
 
-    /// Próbki z siatki 12x12 (cały obraz, bez kadrowania).
-    private static func samples(_ image: UIImage) -> [Sample] {
+    /// Próbki z siatki n x n (cały obraz, bez kadrowania), wierszami od góry.
+    private static func samples(_ image: UIImage, side n: Int = 12) -> [Sample] {
         guard let cg = image.cgImage else { return [] }
-        let n = 12
         let space = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(data: nil, width: n, height: n, bitsPerComponent: 8, bytesPerRow: n * 4,
                                   space: space, bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue),
@@ -123,78 +102,117 @@ final class ArtworkLoader {
         return out
     }
 
-    /// Średnia jasność obrazka (0...1) - do przyciemnienia tła pod białym tekstem.
-    static func meanBrightness(of image: UIImage) -> Double {
-        let all = samples(image)
-        guard !all.isEmpty else { return 0.4 }
-        // Jasność postrzegana (zieleń jaśniejsza niż niebieski).
-        let sum = all.reduce(0.0) { $0 + Double(0.299 * $1.r + 0.587 * $1.g + 0.114 * $1.b) }
-        return sum / Double(all.count)
+    private static func smoothstep(_ a: Double, _ b: Double, _ x: Double) -> Double {
+        let t = min(max((x - a) / (b - a), 0), 1)
+        return t * t * (3 - 2 * t)
     }
 
-    /// Jaka część okładki jest naprawdę kolorowa (0 = szara / czarno-biała, 1 = cała w kolorze).
-    static func colorfulness(of image: UIImage) -> Double {
-        let all = samples(image)
-        guard !all.isEmpty else { return 0 }
-        let meanS = all.reduce(0) { $0 + $1.s } / CGFloat(all.count)
-        guard meanS > 0.05 else { return 0 }
-        return Double(all.filter { $0.colorful }.count) / Double(all.count)
+    /// Kolor okładki przygotowany na tło pod biały tekst - tak, żeby dalej wyglądał jak ten z okładki:
+    /// - jasne kolory są przyciemniane (żeby biały tekst był czytelny), a w zamian dostają więcej nasycenia:
+    ///   jasny róż zostaje różem, a nie robi się szary / biały,
+    /// - ciemne szarości zostają szare (niebieskawa szarość nie robi się niebieska),
+    /// - czerń jest lekko rozjaśniona, żeby tło nie było martwą plamą.
+    /// (Wartości dobrane na prawdziwych okładkach: szarej, kolorowej i jasnoróżowej.)
+    private static func toned(r: Double, g: Double, b: Double) -> (h: Double, s: Double, v: Double) {
+        var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
+        UIColor(red: CGFloat(r), green: CGFloat(g), blue: CGFloat(b), alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &a)
+        let sat = Double(s), val = Double(v)
+        let bright = smoothstep(0.5, 0.95, val)
+        // Im jaśniejszy kolor, tym mniejszy odcień wystarczy, żeby był "kolorem" (blady róż); ciemne szarości - nie.
+        let low = 0.10 - 0.08 * bright
+        let gate = smoothstep(low, low + 0.08, sat)
+        let boost = 1.0 + (0.15 + 3.0 * bright) * gate
+        let s2 = min(sat * boost, max(sat, 0.85))
+        let knee = 0.45
+        let v2 = max(val <= knee ? val : knee + (val - knee) * 0.3, 0.10)
+        return (Double(h), s2, v2)
     }
 
-    /// Średnie nasycenie jasnych pikseli (ciemne piksele mają przypadkowe nasycenie) - 0 = szara okładka.
-    static func meanSaturation(of image: UIImage) -> Double {
-        let lit = samples(image).filter { $0.v > 0.2 }
-        guard !lit.isEmpty else { return 0 }
-        return Double(lit.reduce(0) { $0 + $1.s } / CGFloat(lit.count))
-    }
-
-    /// O ile podbić nasycenie tła, żeby wyglądało jak okładka: szara zostaje szara (×1), pastelowa (np. jasny róż)
-    /// dostaje mocniej, żeby po rozmyciu i przyciemnieniu dalej była różowa, a nie biała / szara; mocno kolorowa
-    /// prawie bez zmian (bez przesady).
-    static func backgroundSaturation(of image: UIImage) -> Double {
-        let s = meanSaturation(of: image)
-        guard s > 0.05 else { return 1.0 }
-        return min(max(0.4 / s, 1.08), 2.2)
-    }
-
-    /// Dominujące kolory okładki z udziałem w obrazku (od największego) - grupy podobnych pikseli z całego
-    /// obrazka, także szarości i czerni, uśrednione z prawdziwych pikseli. Z tego powstaje tło (siatka kolorów).
-    static func dominantColors(of image: UIImage, max count: Int = 5) -> [(color: UIColor, share: Double)] {
-        let all = samples(image)
-        guard !all.isEmpty else { return [] }
-        func distance(_ a: Sample, _ b: Sample) -> CGFloat {
-            let dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b
-            return (dr * dr + dg * dg + db * db).squareRoot()
-        }
-        var groups: [(first: Sample, r: CGFloat, g: CGFloat, b: CGFloat, count: Int)] = []
-        for px in all {
-            if let i = groups.firstIndex(where: { distance($0.first, px) <= 0.22 }) {
-                groups[i].r += px.r; groups[i].g += px.g; groups[i].b += px.b; groups[i].count += 1
-            } else {
-                groups.append((px, px.r, px.g, px.b, 1))
+    /// Kolory wierzchołków siatki tła (wierszami od góry) i ich średnia jasność.
+    /// To po prostu bardzo mocno rozmyta okładka w rozdzielczości siatki: każdy wierzchołek jest średnią kolorów
+    /// okładki z jego okolicy (waga Gaussa). Dzięki temu tło ma kolory okładki w tych samych miejscach i w tych
+    /// samych proporcjach co okładka - mały kolorowy szczegół nie zalewa ekranu, a szara okładka zostaje szara.
+    /// Każdy wierzchołek ma też minimalnie inną jasność (stałą dla piosenki), żeby jednolita okładka nie dawała
+    /// martwej, płaskiej plamy.
+    static func meshColors(of image: UIImage, columns: Int, rows: Int, seed: Int) -> (colors: [UIColor], brightness: Double) {
+        let n = 24
+        let px = samples(image, side: n)
+        guard px.count == n * n, columns > 1, rows > 1 else { return ([], 0) }
+        var rng = SeededRandom(seed: UInt64(truncatingIfNeeded: seed))
+        let sigmaX = 0.36 / Double(columns - 1)
+        let sigmaY = 0.36 / Double(rows - 1)
+        func weights(_ center: Double, _ sigma: Double) -> [Double] {
+            (0..<n).map { i in
+                let d = (Double(i) + 0.5) / Double(n) - center
+                return exp(-(d * d) / (2 * sigma * sigma))
             }
         }
-        let total = Double(all.count)
-        return groups.sorted { $0.count > $1.count }.prefix(count).map { g in
-            let n = CGFloat(g.count)
-            return (UIColor(red: g.r / n, green: g.g / n, blue: g.b / n, alpha: 1), Double(g.count) / total)
+        var colors: [UIColor] = []
+        colors.reserveCapacity(columns * rows)
+        var light = 0.0
+        for row in 0..<rows {
+            let wy = weights(Double(row) / Double(rows - 1), sigmaY)
+            for col in 0..<columns {
+                let wx = weights(Double(col) / Double(columns - 1), sigmaX)
+                var r = 0.0, g = 0.0, b = 0.0, sum = 0.0
+                for y in 0..<n {
+                    for x in 0..<n {
+                        let w = wy[y] * wx[x]
+                        let p = px[y * n + x]
+                        r += Double(p.r) * w
+                        g += Double(p.g) * w
+                        b += Double(p.b) * w
+                        sum += w
+                    }
+                }
+                guard sum > 0 else {
+                    colors.append(UIColor(white: 0.2, alpha: 1))
+                    light += 0.2
+                    continue
+                }
+                let t = toned(r: r / sum, g: g / sum, b: b / sum)
+                let v = min(max(t.v * (1 + 0.08 * Double.random(in: -1...1, using: &rng)), 0), 1)
+                let color = UIColor(hue: CGFloat(t.h), saturation: CGFloat(t.s), brightness: CGFloat(v), alpha: 1)
+                colors.append(color)
+                light += color.luminance
+            }
+        }
+        return (colors, light / Double(colors.count))
+    }
+
+    /// Tło, gdy jeszcze nic nie gra: spokojna, ciemna zorza (granat, indygo, fiolet) zamiast szarej plamy.
+    static func idleMeshColors(columns: Int, rows: Int) -> [UIColor] {
+        let palette: [(h: CGFloat, s: CGFloat, v: CGFloat)] = [
+            (0.70, 0.72, 0.40), (0.76, 0.66, 0.42), (0.63, 0.78, 0.36), (0.84, 0.58, 0.38),
+            (0.67, 0.62, 0.16), (0.72, 0.50, 0.10)
+        ]
+        var rng = SeededRandom(seed: 0x4C554D454E)
+        return (0..<(columns * rows)).map { _ in
+            let c = palette[Int.random(in: 0..<palette.count, using: &rng)]
+            return UIColor(hue: c.h, saturation: c.s, brightness: c.v, alpha: 1)
         }
     }
 
-    /// Kolory siatki tła (np. 4x4 = 16 pól): dominujące kolory okładki, każdy na tylu polach, ile zajmuje okładki
-    /// (ale każdy z głównych co najmniej raz), rozrzucone losowo - za to zawsze tak samo dla tej samej piosenki.
-    static func meshColors(of image: UIImage, seed: Int, cells: Int = 16) -> [UIColor] {
-        let dominant = dominantColors(of: image, max: 5)
-        guard !dominant.isEmpty else { return Array(repeating: UIColor(white: 0.25, alpha: 1), count: cells) }
-        let totalShare = dominant.reduce(0) { $0 + $1.share }
-        var bag: [UIColor] = []
-        for d in dominant {
-            let n = max(1, Int((d.share / max(totalShare, 0.0001) * Double(cells)).rounded()))
-            bag += Array(repeating: d.color, count: n)
+    /// Gładki obraz z kolorów siatki (dla iOS 17, gdzie nie ma MeshGradient): każdy wierzchołek to jeden piksel,
+    /// całość powiększona z wygładzaniem.
+    static func meshImage(_ colors: [UIColor], columns: Int, rows: Int) -> UIImage? {
+        guard colors.count == columns * rows, columns > 0, rows > 0 else { return nil }
+        let format = UIGraphicsImageRendererFormat.default()
+        format.scale = 1
+        format.opaque = true
+        let tiny = UIGraphicsImageRenderer(size: CGSize(width: columns, height: rows), format: format).image { ctx in
+            for r in 0..<rows {
+                for c in 0..<columns {
+                    colors[r * columns + c].setFill()
+                    ctx.fill(CGRect(x: c, y: r, width: 1, height: 1))
+                }
+            }
         }
-        while bag.count < cells { bag.append(dominant[0].color) }
-        var rng = SeededRandom(seed: UInt64(truncatingIfNeeded: seed))
-        return Array(bag.shuffled(using: &rng).prefix(cells))
+        let size = CGSize(width: columns * 24, height: rows * 24)
+        return UIGraphicsImageRenderer(size: size, format: format).image { ctx in
+            ctx.cgContext.interpolationQuality = .high
+            tiny.draw(in: CGRect(origin: .zero, size: size))
+        }
     }
 
     /// Kolor "klimatu" piosenki prosto z okładki - ale tylko wtedy, gdy jakiś kolor naprawdę na niej dominuje
@@ -222,93 +240,9 @@ final class ArtworkLoader {
         UIColor(red: top.r / n, green: top.g / n, blue: top.b / n, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &a)
         return UIColor(hue: h, saturation: min(max(s * 1.15, 0.35), 0.8), brightness: max(v, 0.9), alpha: 1)
     }
-
-    /// Kolor "klimatu" piosenki: najbardziej wyrazisty z palety okładki, rozjaśniony tak, żeby świecił na ciemnym tle.
-    /// nil = okładka szara / czarno-biała (wtedy aplikacja używa zwykłego białego).
-    static func vibe(from palette: [UIColor]) -> UIColor? {
-        var best: UIColor? = nil
-        var bestScore: CGFloat = 0
-        for c in palette {
-            var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
-            guard c.getHue(&h, saturation: &s, brightness: &v, alpha: &a), s > 0.12 else { continue }
-            let score = s * 0.8 + v * 0.2
-            if score > bestScore { bestScore = score; best = c }
-        }
-        guard let pick = best else { return nil }
-        var h: CGFloat = 0, s: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
-        pick.getHue(&h, saturation: &s, brightness: &v, alpha: &a)
-        return UIColor(hue: h, saturation: min(max(s * 1.3, 0.45), 0.85), brightness: max(v, 0.92), alpha: 1)
-    }
-
-    /// Do 5 kolorów tła, w takich proporcjach, w jakich naprawdę są na okładce:
-    /// - szara / czarno-biała okładka = szare tło (szum kompresji JPEG nie robi już różowych plam),
-    /// - okładka częściowo szara = część palety szara, część w kolorach okładki,
-    /// - kolor, który zajmuje tylko mały kawałek okładki (< 3%), nie trafia do tła,
-    /// - kolory są uśrednione z prawdziwych pikseli (bez sztucznego podbijania i wymyślonych odcieni).
-    static func palette(from image: UIImage) -> [UIColor] {
-        let all = samples(image)
-        guard !all.isEmpty else { return [] }
-        let k = CGFloat(all.count)
-        let colorful = all.filter { $0.colorful }
-        let neutral = all.filter { !$0.colorful }
-        let share = CGFloat(colorful.count) / k
-        let meanS = all.reduce(0) { $0 + $1.s } / k
-        guard meanS > 0.05, share >= 0.08 else { return grayPalette(from: neutral.isEmpty ? all : neutral) }
-
-        func distance(_ a: Sample, _ b: Sample) -> CGFloat {
-            let dr = a.r - b.r, dg = a.g - b.g, db = a.b - b.b
-            return (dr * dr + dg * dg + db * db).squareRoot()
-        }
-        // Grupy podobnych kolorów: suma składowych (do średniej) i liczba pikseli.
-        var groups: [(first: Sample, r: CGFloat, g: CGFloat, b: CGFloat, count: Int)] = []
-        for px in colorful.sorted(by: { $0.s * 0.7 + $0.v * 0.3 > $1.s * 0.7 + $1.v * 0.3 }) {
-            if let i = groups.firstIndex(where: { distance($0.first, px) <= 0.3 }) {
-                groups[i].r += px.r; groups[i].g += px.g; groups[i].b += px.b; groups[i].count += 1
-            } else {
-                groups.append((px, px.r, px.g, px.b, 1))
-            }
-        }
-        let minCount = max(2, Int((k * 0.03).rounded()))
-        let main = groups.filter { $0.count >= minCount }.sorted { $0.count > $1.count }
-        guard !main.isEmpty else { return grayPalette(from: neutral.isEmpty ? all : neutral) }
-
-        // Ile miejsc w palecie dostają kolory: tyle, ile okładki jest kolorowe (reszta to jej szarości).
-        let slots = min(main.count, max(1, Int((share * 5).rounded())))
-        var out: [UIColor] = main.prefix(slots).map { g in
-            let n = CGFloat(g.count)
-            var h: CGFloat = 0, sat: CGFloat = 0, v: CGFloat = 0, a: CGFloat = 0
-            UIColor(red: g.r / n, green: g.g / n, blue: g.b / n, alpha: 1).getHue(&h, saturation: &sat, brightness: &v, alpha: &a)
-            // Tylko lekka korekta, żeby kolor było widać na ciemnym tle - odcień zostaje z okładki,
-            // a pastele (jasny róż, błękit) dostają trochę więcej nasycenia, żeby nie wyszły na biało.
-            return UIColor(hue: h, saturation: min(1, max(sat * 1.05, min(sat * 1.8, 0.35))), brightness: max(v, 0.38), alpha: 1)
-        }
-        if out.count < 5, share < 0.85, !neutral.isEmpty {
-            let grays = grayPalette(from: neutral)
-            var i = 0
-            while out.count < 5 {
-                out.append(grays[i % grays.count])
-                i += 1
-            }
-        }
-        return out
-    }
-
-    /// Odcienie "szarości" z rozpiętości jasności prawdziwych pikseli okładki. Zostaje tylko taki odcień,
-    /// jaki ma średnio cała szara część (np. ciepła szarość), i to mocno stonowany - zero wymyślonego koloru.
-    private static func grayPalette(from px: [Sample]) -> [UIColor] {
-        guard !px.isEmpty else { return [UIColor(white: 0.3, alpha: 1)] }
-        let n = CGFloat(px.count)
-        let mr = px.reduce(0) { $0 + $1.r } / n, mg = px.reduce(0) { $0 + $1.g } / n, mb = px.reduce(0) { $0 + $1.b } / n
-        var tintH: CGFloat = 0, tintS: CGFloat = 0, tv: CGFloat = 0, ta: CGFloat = 0
-        UIColor(red: mr, green: mg, blue: mb, alpha: 1).getHue(&tintH, saturation: &tintS, brightness: &tv, alpha: &ta)
-        let tint = tintS < 0.06 ? 0 : min(tintS * 0.8, 0.1)
-        let levels = px.map { $0.v }.sorted()
-        let picks = [0.15, 0.35, 0.55, 0.75, 0.9].map { levels[min(levels.count - 1, Int(Double(levels.count - 1) * $0))] }
-        return picks.map { UIColor(hue: tintH, saturation: tint, brightness: max(0.22, min(0.82, $0)), alpha: 1) }
-    }
 }
 
-/// Prosty generator liczb losowych z ziarnem: ta sama piosenka = ten sam układ kolorów tła.
+/// Prosty generator liczb losowych z ziarnem: ta sama piosenka = zawsze takie samo tło.
 struct SeededRandom: RandomNumberGenerator {
     private var state: UInt64
 

@@ -207,21 +207,7 @@ struct PlaylistRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            if let cover = playlist.coverFile, let img = UIImage(contentsOfFile: LibraryStore.coversDir.appendingPathComponent(cover).path) {
-                Image(uiImage: img)
-                    .resizable().scaledToFill()
-                    .frame(width: 62, height: 62)
-                    .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-            } else if playlist.tracks.count == 1, let first = playlist.tracks.first {
-                TrackThumb(track: first, size: 62)
-            } else if playlist.tracks.count > 1 {
-                mosaic
-            } else {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(ink.opacity(0.12))
-                    .frame(width: 62, height: 62)
-                    .overlay(Image(systemName: "music.note.list").foregroundStyle(ink.opacity(0.6)))
-            }
+            PlaylistCover(playlist: playlist, size: 62, radius: 12)
             VStack(alignment: .leading, spacing: 3) {
                 Text(playlist.name).font(.system(size: 18, weight: .semibold)).foregroundStyle(ink).lineLimit(1)
                 Text("\(Pl.songs(playlist.tracks.count))").font(.system(size: 14)).foregroundStyle(ink.opacity(0.6))
@@ -232,11 +218,39 @@ struct PlaylistRow: View {
         .padding(.vertical, 4)
         .contentShape(Rectangle())
     }
+}
 
-    /// Domyślna ikona playlisty: okładki pierwszych 4 piosenek (siatka 2x2).
+/// Okładka playlisty: własne zdjęcie, okładka jedynej piosenki albo mozaika 2x2 z okładek pierwszych czterech.
+struct PlaylistCover: View {
+    @Environment(\.ink) private var ink
+    let playlist: Playlist
+    var size: CGFloat = 62
+    var radius: CGFloat = 12
+
+    var body: some View {
+        Group {
+            if let cover = playlist.coverFile,
+               let img = UIImage(contentsOfFile: LibraryStore.coversDir.appendingPathComponent(cover).path) {
+                Image(uiImage: img).resizable().scaledToFill()
+            } else if playlist.tracks.count == 1, let first = playlist.tracks.first {
+                TrackThumb(track: first, size: size, cornerRadius: 0)
+            } else if playlist.tracks.count > 1 {
+                mosaic
+            } else {
+                Rectangle()
+                    .fill(ink.opacity(0.12))
+                    .overlay(Image(systemName: "music.note.list")
+                        .font(.system(size: size * 0.3, weight: .semibold))
+                        .foregroundStyle(ink.opacity(0.6)))
+            }
+        }
+        .frame(width: size, height: size)
+        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+    }
+
     private var mosaic: some View {
         let tracks = Array(playlist.tracks.prefix(4))
-        let cell: CGFloat = 30.5
+        let cell = (size - 1) / 2
         return VStack(spacing: 1) {
             ForEach(0..<2, id: \.self) { row in
                 HStack(spacing: 1) {
@@ -251,8 +265,6 @@ struct PlaylistRow: View {
                 }
             }
         }
-        .frame(width: 62, height: 62)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
     }
 }
 
@@ -290,7 +302,8 @@ struct PlaylistDetailView: View {
 
     private func content(_ p: Playlist) -> some View {
         VStack(spacing: 0) {
-            ScreenHeader(p.name, back: back) {
+            // Nazwa jest pod dużą okładką (jak w Apple Music), więc na górze zostaje tylko "wstecz" i przyciski.
+            ScreenHeader("", back: back) {
                 HStack(spacing: 0) {
                     Menu {
                         if PlaylistServer.published(p.id) == nil {
@@ -336,29 +349,25 @@ struct PlaylistDetailView: View {
                     .accessibilityLabel(editMode.isEditing ? "Gotowe" : "Edytuj")
                 }
             }
-            HStack(spacing: 12) {
-                actionButton("Odtwórz", "play.fill") { engine.play(p.tracks, startAt: 0) }
-                actionButton("Losowo", "shuffle") { engine.play(p.tracks, startAt: 0, shuffled: true) }
-            }
-            .padding(.horizontal, 20)
-            .padding(.bottom, 8)
-            .opacity(p.tracks.isEmpty ? 0.4 : 1)
-            .disabled(p.tracks.isEmpty)
-
             if p.tracks.isEmpty {
                 ScrollView {
+                    hero(p)
                     EmptyHint(icon: "music.note", title: "Pusta playlista",
                               message: "Użyj zakładki Szukaj i menu ••• przy piosence, aby dodać ją tutaj.")
-                        .padding(.top, 40)
+                        .padding(.top, 16)
                 }
             } else {
                 List {
+                    hero(p)
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                        .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 6, trailing: 0))
                     ForEach(Array(p.tracks.enumerated()), id: \.element.id) { index, t in
                         TrackRow(track: t,
                                  isCurrent: engine.currentTrack?.id == t.id,
                                  onPlay: { engine.play(p.tracks, startAt: index) },
                                  onAddToPlaylist: { batch = TrackBatch(tracks: [t]) })
-                            .listRowBackground(Color.clear)
+                            .listRowBackground(CurrentRowBackground(active: engine.currentTrack?.id == t.id))
                             .listRowSeparator(.hidden)
                     }
                     .onDelete { library.remove(at: $0, from: p.id) }
@@ -392,15 +401,75 @@ struct PlaylistDetailView: View {
         }
     }
 
-    private func actionButton(_ title: String, _ icon: String, _ action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Label(title, systemImage: icon)
-                .font(.system(size: 17, weight: .semibold))
-                .foregroundStyle(ink)
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .glass(Capsule(), interactive: true)
+    /// Góra playlisty jak w Apple Music: duża okładka, nazwa, liczba piosenek i łączny czas, przyciski.
+    private func hero(_ p: Playlist) -> some View {
+        VStack(spacing: 16) {
+            PlaylistCover(playlist: p, size: 196, radius: 24)
+                .shadow(color: .black.opacity(0.35), radius: 20, y: 10)
+            VStack(spacing: 4) {
+                Text(p.name)
+                    .font(.system(size: 26, weight: .bold))
+                    .foregroundStyle(ink)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.7)
+                Text(summary(p))
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(ink.opacity(0.6))
+            }
+            HStack(spacing: 12) {
+                actionButton("Odtwórz", "play.fill", prominent: true) { engine.play(p.tracks, startAt: 0) }
+                actionButton("Losowo", "shuffle", prominent: false) { engine.play(p.tracks, startAt: 0, shuffled: true) }
+            }
+            .opacity(p.tracks.isEmpty ? 0.4 : 1)
+            .disabled(p.tracks.isEmpty)
         }
-        .buttonStyle(.plain)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 20)
+        .padding(.top, 18)
+        .padding(.bottom, 8)
+    }
+
+    /// "3 piosenki · 6 min" (czas tylko wtedy, gdy znamy długość piosenek).
+    private func summary(_ p: Playlist) -> String {
+        let total = p.tracks.reduce(0.0) { $0 + max($1.duration, 0) }
+        guard total >= 60 else { return Pl.songs(p.tracks.count) }
+        return "\(Pl.songs(p.tracks.count)) · \(Pl.length(total))"
+    }
+
+    /// Główny przycisk ("Odtwórz") jest wypełniony kolorem tekstu, drugi to szkło.
+    private func actionButton(_ title: String, _ icon: String, prominent: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            if prominent {
+                Label(title, systemImage: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(Color(uiColor: .systemBackground))
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .background(ink, in: Capsule())
+            } else {
+                Label(title, systemImage: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(ink)
+                    .frame(maxWidth: .infinity)
+                    .frame(height: 50)
+                    .glass(Capsule(), interactive: true)
+            }
+        }
+        .buttonStyle(PressScaleStyle(scale: 0.96))
+    }
+}
+
+/// Delikatne podświetlenie wiersza piosenki, która teraz gra.
+struct CurrentRowBackground: View {
+    @Environment(\.ink) private var ink
+    let active: Bool
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 16, style: .continuous)
+            .fill(ink.opacity(active ? 0.1 : 0))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 1)
+            .animation(.easeInOut(duration: 0.25), value: active)
     }
 }

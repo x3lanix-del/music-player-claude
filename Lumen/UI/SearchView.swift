@@ -79,7 +79,7 @@ struct SearchView: View {
                                  isCurrent: engine.currentTrack?.id == t.id,
                                  onPlay: { engine.play(model.results, startAt: index) },
                                  onAddToPlaylist: { batch = TrackBatch(tracks: [t]) })
-                            .listRowBackground(Color.clear)
+                            .listRowBackground(CurrentRowBackground(active: engine.currentTrack?.id == t.id))
                             .listRowSeparator(.hidden)
                     }
                 }

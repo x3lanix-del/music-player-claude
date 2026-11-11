@@ -1,3 +1,19 @@
+## 1.35.0 - nowe tło i ładniejsze playlisty
+- **Tło naprawione i zrobione od nowa.** W 1.32-1.34 tło rozmywane „na żywo” wyświetlało się na telefonie jako
+  ostre pasy (błąd rozmycia w systemie). Teraz nie ma żadnego rozmywania: tło to systemowa siatka gradientu
+  (MeshGradient, iOS 18+), więc kolory przechodzą w siebie idealnie gładko.
+- **Kolory jak na okładce:** każdy punkt siatki ma kolor okładki ze swojej okolicy (to po prostu bardzo mocno
+  rozmyta okładka), więc kolory są w tych samych miejscach i proporcjach co na okładce. Szara okładka = szare tło,
+  jasnoróżowa = różowe (jasne kolory są przyciemniane pod biały tekst, ale dostają więcej nasycenia), mały kolorowy
+  szczegół nie zalewa ekranu. Sprawdzone na okładkach: szarej, kolorowej i jasnoróżowej.
+- **Tło płynie jak w Apple Music:** punkty siatki powoli krążą, całość lekko się kołysze, a przy zmianie piosenki
+  kolory płynnie przechodzą w nowe. Tempo: Ustawienia → Tempo animacji tła.
+- Gdy jeszcze nic nie gra: ciemna zorza (granat, indygo, fiolet) zamiast szarej plamy.
+- **Playlista jak w Apple Music:** duża okładka z cieniem, nazwa, liczba piosenek i łączny czas, wypełniony
+  przycisk „Odtwórz” i szklany „Losowo”; wszystko przewija się razem z listą.
+- Piosenka, która teraz gra, ma delikatnie podświetlony wiersz (playlista i wyniki wyszukiwania).
+- iOS 17: to samo tło jako gładki obraz, który powoli się kołysze.
+
 ## 1.34.0 - tło dokładnie jak w repozytorium „Apple Music Background”
 - Tło zrobione techniką z repozytorium frigopedro/Apple-Music-Background: z okładki 5 dominujących kolorów,
   siatka pól (5 x 7), każde pole losowo jednym z tych kolorów, a na wierzchu bardzo mocne rozmycie (ok. 90 pt)

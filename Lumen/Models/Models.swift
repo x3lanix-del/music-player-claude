@@ -31,6 +31,16 @@ enum Pl {
     }
 }
 
+extension Pl {
+    /// Łączny czas: "45 min", "1 godz. 5 min".
+    static func length(_ seconds: Double) -> String {
+        let minutes = Int((seconds / 60).rounded())
+        if minutes < 60 { return "\(max(minutes, 1)) min" }
+        let h = minutes / 60, m = minutes % 60
+        return m == 0 ? "\(h) godz." : "\(h) godz. \(m) min"
+    }
+}
+
 enum Fmt {
     static func time(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds > 0 else { return "0:00" }
