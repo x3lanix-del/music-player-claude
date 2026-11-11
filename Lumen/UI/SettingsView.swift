@@ -6,7 +6,7 @@ struct SettingsView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var engine: PlayerEngine
     @EnvironmentObject var toast: ToastCenter
-    @State private var showGuide = false
+    @EnvironmentObject var tour: TourCenter
     @State private var pickerItem: PhotosPickerItem? = nil
     @State private var confirmDelete = false
 
@@ -26,10 +26,6 @@ struct SettingsView: View {
             .scrollContentBackground(.hidden)
         }
         .frame(maxWidth: .infinity)
-        .sheet(isPresented: $showGuide) {
-            GuideView { showGuide = false }
-                .preferredColorScheme(settings.colorScheme)
-        }
         .onChange(of: pickerItem) { _, item in
             guard let item = item else { return }
             Task {
@@ -59,15 +55,15 @@ struct SettingsView: View {
     private var helpSection: some View {
         Section {
             Button {
-                showGuide = true
+                tour.start()
             } label: {
-                Label("Jak korzystać z aplikacji", systemImage: "questionmark.circle")
+                Label("Pokaż przewodnik po aplikacji", systemImage: "questionmark.circle")
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
                     .contentShape(Rectangle())
             }
         } footer: {
-            Text("Krótki przewodnik krok po kroku dla początkujących.")
+            Text("Aplikacja sama przejdzie po zakładkach i strzałką pokaże po kolei wszystkie funkcje.")
             .fixedSize(horizontal: false, vertical: true)
         }
         .listRowBackground(rowBackground)

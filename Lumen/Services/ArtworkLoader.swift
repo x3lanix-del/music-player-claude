@@ -180,16 +180,12 @@ final class ArtworkLoader {
         return (colors, light / Double(colors.count))
     }
 
-    /// Tło, gdy jeszcze nic nie gra: spokojna, ciemna zorza (granat, indygo, fiolet) zamiast szarej plamy.
+    /// Tło, gdy jeszcze nic nie gra: czarno-białe (odcienie szarości, bez żadnego koloru).
     static func idleMeshColors(columns: Int, rows: Int) -> [UIColor] {
-        let palette: [(h: CGFloat, s: CGFloat, v: CGFloat)] = [
-            (0.70, 0.72, 0.40), (0.76, 0.66, 0.42), (0.63, 0.78, 0.36), (0.84, 0.58, 0.38),
-            (0.67, 0.62, 0.16), (0.72, 0.50, 0.10)
-        ]
+        let levels: [CGFloat] = [0.42, 0.32, 0.24, 0.16, 0.09, 0.05]
         var rng = SeededRandom(seed: 0x4C554D454E)
         return (0..<(columns * rows)).map { _ in
-            let c = palette[Int.random(in: 0..<palette.count, using: &rng)]
-            return UIColor(hue: c.h, saturation: c.s, brightness: c.v, alpha: 1)
+            UIColor(white: levels[Int.random(in: 0..<levels.count, using: &rng)], alpha: 1)
         }
     }
 
@@ -240,6 +236,12 @@ final class ArtworkLoader {
         UIColor(red: top.r / n, green: top.g / n, blue: top.b / n, alpha: 1).getHue(&h, saturation: &s, brightness: &v, alpha: &a)
         return UIColor(hue: h, saturation: min(max(s * 1.15, 0.35), 0.8), brightness: max(v, 0.9), alpha: 1)
     }
+}
+
+/// Rozmiar siatki tła: 4 kolumny x 6 wierszy wierzchołków (pionowy ekran).
+enum Backdrop {
+    static let columns = 4
+    static let rows = 6
 }
 
 /// Prosty generator liczb losowych z ziarnem: ta sama piosenka = zawsze takie samo tło.

@@ -8,6 +8,7 @@ struct LumenApp: App {
     @StateObject private var engine: PlayerEngine
     @StateObject private var library = LibraryStore()
     @StateObject private var volume = VolumeController()
+    @StateObject private var tour = TourCenter()
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
@@ -28,6 +29,7 @@ struct LumenApp: App {
                 .environmentObject(engine)
                 .environmentObject(library)
                 .environmentObject(volume)
+                .environmentObject(tour)
                 .preferredColorScheme(settings.colorScheme)
                 .appColors(settings)
                 .onAppear { UIApplication.shared.isIdleTimerDisabled = true }   // ekran nie przygasa i nie wyłącza się

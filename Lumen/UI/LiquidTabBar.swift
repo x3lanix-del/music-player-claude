@@ -53,6 +53,7 @@ struct LiquidTabBar: View {
                 HStack(spacing: 0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         tabLabel(item, active: active == index, pressed: pressed)
+                            .tourTarget(.tab(item.tab))
                     }
                 }
                 .padding(.horizontal, inset)

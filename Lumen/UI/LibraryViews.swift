@@ -146,6 +146,7 @@ struct LibraryRootView: View {
                         .glass(Circle(), interactive: true)
                         .contentShape(Circle())
                 }
+                .tourTarget(.libraryAdd)
             }
             if library.playlists.isEmpty {
                 ScrollView {

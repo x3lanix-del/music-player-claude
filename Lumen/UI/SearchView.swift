@@ -28,6 +28,7 @@ struct SearchView: View {
         VStack(spacing: 0) {
             ScreenHeader("Szukaj")
             searchField
+                .tourTarget(.searchField)
                 .padding(.horizontal, 20)
                 .padding(.bottom, 10)
 
@@ -44,6 +45,7 @@ struct SearchView: View {
                     .glass(Capsule(), interactive: true)
             }
             .buttonStyle(.plain)
+            .tourTarget(.recognize)
             .padding(.horizontal, 20)
             .padding(.bottom, 8)
 

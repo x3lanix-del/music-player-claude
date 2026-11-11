@@ -47,6 +47,30 @@ final class PlayerEngine: ObservableObject {
     @Published private(set) var artworkTrackID: String? = nil
     /// Kolor "klimatu" grającej piosenki (z okładki): poświata, pasek postępu, świecący tekst. nil = szara okładka.
     @Published private(set) var vibe: UIColor? = nil
+    /// Kolory tła (siatka wierzchołków) z okładki grającej piosenki. Liczone raz, tutaj, i używane przez wszystkie
+    /// ekrany - dzięki temu odtwarzacz od razu otwiera się w kolorach piosenki. Puste = nic jeszcze nie grało.
+    @Published private(set) var backdrop: [UIColor] = []
+    /// Przyciemnienie tła dobrane do jego jasności (jaśniejsze tło = trochę mocniej, pod biały tekst).
+    @Published private(set) var backdropShade: Double = 0.1
+
+    private func setBackdrop(_ field: (colors: [UIColor], brightness: Double)) {
+        guard field.colors.count == Backdrop.columns * Backdrop.rows else { return }
+        backdrop = field.colors
+        // Kolory są już przyciemnione pod biały tekst; jaśniejsze tło dostaje jeszcze trochę cienia.
+        backdropShade = min(max(0.06 + (field.brightness - 0.35) * 0.9, 0.06), 0.3)
+    }
+
+    /// Kolory tła od razu przy starcie piosenki: z dużej okładki w pamięci albo z miniatury, którą widać na liście
+    /// (zanim duża okładka się pobierze). Bez tego tło przez chwilę miało kolory poprzedniej piosenki.
+    private func quickBackdrop(for track: Track) {
+        var image = ArtworkLoader.shared.cached(track.id)
+        if image == nil, let url = track.artworkURL, let thumb = ThumbCache.shared.image(for: url) {
+            image = ArtworkLoader.squareCrop(thumb)
+        }
+        guard let image = image else { return }
+        setBackdrop(ArtworkLoader.meshColors(of: image, columns: Backdrop.columns, rows: Backdrop.rows,
+                                             seed: LyricsProviders.stableID(track.id)))
+    }
     @Published private(set) var shuffle = false
     @Published private(set) var playbackRate: Double = 1
     private var keepPitch = true
@@ -663,6 +687,7 @@ final class PlayerEngine: ObservableObject {
         startLoad(track: track, startAt: startAt)
         resetRadioState()
         if !track.isRadio {
+            quickBackdrop(for: track)
             remember(track)
             lyrics.load(track: track, offset: settings.lyricsOffset(for: track.id), stretch: settings.lyricsStretch(for: track.id))
             loadArtwork(for: track)
@@ -727,6 +752,8 @@ final class PlayerEngine: ObservableObject {
             self.artwork = img
             self.artworkTrackID = track.id
             self.vibe = ArtworkLoader.vibe(of: img)
+            self.setBackdrop(ArtworkLoader.meshColors(of: img, columns: Backdrop.columns, rows: Backdrop.rows,
+                                                      seed: LyricsProviders.stableID(track.id)))
             self.nowPlayingArtwork = NowPlayingArtwork.make(img)
             self.updateNowPlaying()
         }
@@ -971,6 +998,11 @@ final class PlayerEngine: ObservableObject {
             self.artwork = image
             self.artworkTrackID = image == nil ? nil : track.id
             self.vibe = image.flatMap { ArtworkLoader.vibe(of: $0) }
+            if let image = image {
+                // Dokładne kolory z dużej okładki (te z miniatury są prawie takie same, więc zmiany nie widać).
+                self.setBackdrop(ArtworkLoader.meshColors(of: image, columns: Backdrop.columns, rows: Backdrop.rows,
+                                                          seed: LyricsProviders.stableID(track.id)))
+            }
             self.nowPlayingArtwork = image.map { NowPlayingArtwork.make($0) }
             self.updateNowPlaying()
         }

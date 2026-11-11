@@ -20,10 +20,10 @@ struct RootView: View {
     @EnvironmentObject var toast: ToastCenter
     @EnvironmentObject var library: LibraryStore
     @EnvironmentObject var volume: VolumeController
+    @EnvironmentObject var tour: TourCenter
     @State private var tab: AppTab = .home
     @State private var showNowPlaying = false
     @State private var showRadioPlayer = false
-    @State private var showGuide = false
     @State private var librarySelected: UUID? = nil
     @StateObject private var searchModel = SearchModel()
     @StateObject private var homeModel = HomeModel()
@@ -42,11 +42,15 @@ struct RootView: View {
         }
         .onAppear {
             engine.setPlayback(rate: settings.data.playbackRate, keepPitch: settings.data.keepPitch)
-            if !settings.data.guideSeen { showGuide = true }
         }
-        .sheet(isPresented: $showGuide, onDismiss: { settings.data.guideSeen = true }) {
-            GuideView { showGuide = false }
-                .preferredColorScheme(settings.colorScheme)
+        .task {
+            // Przewodnik pokazuje się sam przy pierwszym uruchomieniu (potem jest w Ustawieniach).
+            guard !settings.data.tourSeen else { return }
+            try? await Task.sleep(nanoseconds: 900_000_000)
+            if !settings.data.tourSeen, tour.index == nil { tour.start() }
+        }
+        .onChange(of: tour.index) { old, new in
+            followTour(from: old, to: new)
         }
         .onOpenURL { url in
             let text = url.absoluteString
@@ -61,6 +65,9 @@ struct RootView: View {
         }
         .overlay(alignment: .top) { toastView }
         .animation(.spring(response: 0.4, dampingFraction: 0.85), value: toast.message)
+        .overlayPreferenceValue(TourAnchorKey.self) { anchors in
+            tourLayer(anchors)
+        }
         .sheet(isPresented: $showRadioPlayer) {
             RadioNowPlayingView()
                 .environmentObject(engine)
@@ -79,6 +86,42 @@ struct RootView: View {
                 .environmentObject(volume)
                 .preferredColorScheme(settings.colorScheme)
                 .tint(settings.readableTint)
+        }
+    }
+
+    /// Nakładka przewodnika: przyciemnienie, okno na wskazany element, strzałka i dymek.
+    private func tourLayer(_ anchors: [TourTarget: Anchor<CGRect>]) -> some View {
+        GeometryReader { proxy in
+            if let i = tour.index, TourStep.all.indices.contains(i) {
+                let step = TourStep.all[i]
+                TourOverlay(step: step, index: i, count: TourStep.all.count,
+                            target: step.target.flatMap { anchors[$0] }.map { proxy[$0] },
+                            size: proxy.size,
+                            onNext: { tour.next() },
+                            onBack: { tour.back() },
+                            onSkip: { tour.stop() })
+                    .transition(.opacity)
+            }
+        }
+        .ignoresSafeArea()
+        .allowsHitTesting(tour.index != nil)
+        .animation(.easeInOut(duration: 0.25), value: tour.index == nil)
+    }
+
+    /// Przewodnik sam przełącza zakładki; po ostatnim kroku (albo "Pomiń") zapamiętujemy, że już był.
+    private func followTour(from old: Int?, to new: Int?) {
+        guard let i = new, TourStep.all.indices.contains(i) else {
+            if old != nil { settings.data.tourSeen = true }
+            return
+        }
+        if old == nil {
+            // Start: zamknij klawiaturę i otwartą playlistę, żeby wskazywane elementy były na ekranie.
+            UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil)
+            librarySelected = nil
+        }
+        let wanted = TourStep.all[i].tab
+        if wanted != tab {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.82)) { tab = wanted }
         }
     }
 
@@ -112,8 +155,10 @@ struct RootView: View {
             if engine.currentTrack != nil {
                 // Radio ma własny ekran odtwarzacza (stacja, grany utwór, tekst).
                 MiniPlayerBar { if engine.isRadio { showRadioPlayer = true } else { showNowPlaying = true } }
+                    .tourTarget(.miniPlayer)
             }
             tabBar
+                .tourTarget(.tabBar)
         }
         .padding(.horizontal, 16)
         .padding(.bottom, 6)

@@ -1,3 +1,16 @@
+## 1.36.0 - przewodnik ze strzałką
+- **Nowy przewodnik po aplikacji** (zamiast kartek do przewijania): aplikacja sama przechodzi po zakładkach,
+  przyciemnia ekran, podświetla kolejny element, wskazuje go podskakującą strzałką i w dymku opisuje, do czego
+  służy. 13 kroków: zakładki, Główna i „Zaskocz mnie”, wyszukiwarka, rozpoznawanie piosenki, Biblioteka i plus,
+  Radio, mały odtwarzacz, tekst piosenki (z ruchomym demo), menu •••, wejście w Ustawienia i ich opis.
+  „Dalej” albo dotknięcie podświetlonego elementu = następny krok; są też „Wstecz” i „Pomiń”.
+  Pokazuje się sam raz po aktualizacji / przy pierwszym uruchomieniu, potem: Ustawienia → „Pokaż przewodnik
+  po aplikacji”.
+- **Tło na starcie jest czarno-białe** (odcienie szarości) - bez fioletu.
+- **Odtwarzacz od razu w kolorach piosenki:** kolory tła liczy teraz odtwarzacz już w chwili startu piosenki
+  (z miniatury, którą widać na liście) i używają ich wszystkie ekrany. Otwierany ekran piosenki nie zaczyna już
+  od innego koloru, który potem się zmienia.
+
 ## 1.35.1
 - Z końca tekstu piosenki znika dopisek „Tekst: … · słowo po słowie” (skąd jest tekst).
 

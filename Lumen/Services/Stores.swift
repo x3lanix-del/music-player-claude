@@ -74,6 +74,8 @@ struct SettingsData: Codable, Equatable {
     var playbackRate: Double = 1
     var keepPitch: Bool = true
     var bannerMotion: Bool = true
+    /// Przewodnik ze strzałką (1.36) został już pokazany.
+    var tourSeen: Bool = false
 
     // Kolory (pusty = automatycznie, zależnie od tła)
     var inkHex: String = ""
@@ -113,6 +115,7 @@ struct SettingsData: Codable, Equatable {
         playbackRate = (try? c.decode(Double.self, forKey: .playbackRate)) ?? 1
         keepPitch = (try? c.decode(Bool.self, forKey: .keepPitch)) ?? true
         bannerMotion = (try? c.decode(Bool.self, forKey: .bannerMotion)) ?? true
+        tourSeen = (try? c.decode(Bool.self, forKey: .tourSeen)) ?? false
         inkHex = (try? c.decode(String.self, forKey: .inkHex)) ?? ""
         accentHex = (try? c.decode(String.self, forKey: .accentHex)) ?? ""
         lyricsHex = (try? c.decode(String.self, forKey: .lyricsHex)) ?? ""

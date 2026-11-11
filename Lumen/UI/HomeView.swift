@@ -98,6 +98,7 @@ struct HomeView: View {
                         .animation(.easeInOut(duration: 0.8), value: engine.vibe)
 
                     surpriseButton
+                        .tourTarget(.surprise)
                         .padding(.horizontal, 20)
 
                     if !recent.isEmpty {

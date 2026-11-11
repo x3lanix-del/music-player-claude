@@ -9,22 +9,8 @@ struct AnimatedBackground: View {
     var isActive: Bool = true
     var player: Bool = false
 
-    /// Siatka tła: 4 kolumny x 6 wierszy wierzchołków (pionowy ekran).
-    static let columns = 4
-    static let rows = 6
-    /// Tło, gdy nic jeszcze nie gra.
-    private static let idle = ArtworkLoader.idleMeshColors(columns: columns, rows: rows)
-
-    /// Kolory wierzchołków siatki z okładki grającej piosenki (puste = jeszcze nic nie grało).
-    @State private var mesh: [UIColor] = []
-    /// Gładki obraz z tych kolorów - tylko dla iOS 17 (bez MeshGradient).
-    @State private var still: UIImage? = nil
-    /// Przyciemnienie dobrane do jasności tła (jaśniejsze tło = trochę mocniej, żeby biały tekst był czytelny).
-    @State private var shade: Double = 0.1
-
-    private var key: String {
-        "\(player)|\(settings.data.theme.rawValue)|\(engine.currentTrack?.id ?? "-")|\(engine.artwork != nil)"
-    }
+    /// Tło, gdy nic jeszcze nie gra (czarno-białe).
+    private static let idle = ArtworkLoader.idleMeshColors(columns: Backdrop.columns, rows: Backdrop.rows)
 
     var body: some View {
         GeometryReader { geo in
@@ -51,7 +37,6 @@ struct AnimatedBackground: View {
         }
         .ignoresSafeArea()
         .allowsHitTesting(false)
-        .task(id: key) { await rebuild() }
     }
 
     private var customColor: some View {
@@ -83,9 +68,11 @@ struct AnimatedBackground: View {
     }
 
     /// Tło jak w Apple Music: kolory okładki (w tych samych miejscach i proporcjach co na okładce) płynnie
-    /// przechodzą w siebie i powoli płyną po ekranie.
+    /// przechodzą w siebie i powoli płyną po ekranie. Kolory liczy odtwarzacz (raz na piosenkę), więc każdy ekran -
+    /// także otwierany właśnie odtwarzacz - od razu ma kolory grającej piosenki.
     private func colorful(size: CGSize) -> some View {
-        ZStack {
+        let shade = engine.backdrop.isEmpty ? 0.1 : engine.backdropShade
+        return ZStack {
             Color.black
             flow(size: size)
             Color.black.opacity(player ? shade : max(settings.data.dim, shade))
@@ -94,48 +81,18 @@ struct AnimatedBackground: View {
     }
 
     @ViewBuilder private func flow(size: CGSize) -> some View {
-        let colors = mesh.isEmpty ? AnimatedBackground.idle : mesh
+        let colors = engine.backdrop.isEmpty ? AnimatedBackground.idle : engine.backdrop
         let speed = max(0.25, settings.data.bgSpeed)
         #if compiler(>=6.0)
         if #available(iOS 18.0, *) {
-            ArtworkMesh(colors: colors, columns: AnimatedBackground.columns, rows: AnimatedBackground.rows,
+            ArtworkMesh(colors: colors, columns: Backdrop.columns, rows: Backdrop.rows,
                         size: size, speed: speed, paused: !isActive)
         } else {
-            ArtworkStill(image: still, colors: colors, size: size, speed: speed, paused: !isActive)
+            ArtworkStill(colors: colors, size: size, speed: speed, paused: !isActive)
         }
         #else
-        ArtworkStill(image: still, colors: colors, size: size, speed: speed, paused: !isActive)
+        ArtworkStill(colors: colors, size: size, speed: speed, paused: !isActive)
         #endif
-    }
-
-    private func rebuild() async {
-        guard player || settings.data.theme == .blur, let src = engine.artwork else {
-            // Chwila przełączania piosenki (okładka jeszcze się ładuje): zostaje poprzednie tło, bez mignięcia.
-            if engine.currentTrack == nil {
-                mesh = []
-                still = nil
-            }
-            return
-        }
-        let seed = LyricsProviders.stableID(engine.currentTrack?.id ?? "")
-        var needsStill = true
-        if #available(iOS 18.0, *) { needsStill = false }
-        let wantsStill = needsStill
-        let columns = AnimatedBackground.columns
-        let rows = AnimatedBackground.rows
-        let result = await Task.detached(priority: .utility) { () -> ([UIColor], Double, UIImage?) in
-            let field = ArtworkLoader.meshColors(of: src, columns: columns, rows: rows, seed: seed)
-            let image = wantsStill ? ArtworkLoader.meshImage(field.colors, columns: columns, rows: rows) : nil
-            return (field.colors, field.brightness, image)
-        }.value
-        guard result.0.count == columns * rows else { return }
-        // Kolory są już przyciemnione pod biały tekst; jaśniejsze tło dostaje jeszcze trochę cienia.
-        let target = min(max(0.06 + (result.1 - 0.35) * 0.9, 0.06), 0.3)
-        withAnimation(.easeInOut(duration: 1.0)) {
-            mesh = result.0
-            still = result.2
-            shade = target
-        }
     }
 }
 
@@ -244,18 +201,17 @@ private struct ArtworkMesh: View {
 
 /// Tło dla iOS 17 (bez MeshGradient): gotowy, gładki obraz z kolorów siatki, który powoli się kołysze i "oddycha".
 private struct ArtworkStill: View {
-    let image: UIImage?
     let colors: [UIColor]
     let size: CGSize
     let speed: Double
     let paused: Bool
 
-    @State private var fallback: UIImage? = nil
+    @State private var image: UIImage? = nil
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 20.0, paused: paused)) { tl in
             let t = tl.date.timeIntervalSinceReferenceDate * speed
-            if let shown = image ?? fallback {
+            if let shown = image {
                 Image(uiImage: shown)
                     .resizable()
                     .interpolation(.high)
@@ -268,8 +224,7 @@ private struct ArtworkStill: View {
         .frame(width: size.width, height: size.height)
         .clipped()
         .task(id: colors) {
-            // Obraz z kolorów startowych (gdy nic nie gra) albo gdy gotowego jeszcze nie ma.
-            fallback = ArtworkLoader.meshImage(colors, columns: AnimatedBackground.columns, rows: AnimatedBackground.rows)
+            image = ArtworkLoader.meshImage(colors, columns: Backdrop.columns, rows: Backdrop.rows)
         }
     }
 }
