@@ -1,3 +1,6 @@
+## 1.35.1
+- Z końca tekstu piosenki znika dopisek „Tekst: … · słowo po słowie” (skąd jest tekst).
+
 ## 1.35.0 - nowe tło i ładniejsze playlisty
 - **Tło naprawione i zrobione od nowa.** W 1.32-1.34 tło rozmywane „na żywo” wyświetlało się na telefonie jako
   ostre pasy (błąd rozmycia w systemie). Teraz nie ma żadnego rozmywania: tło to systemowa siatka gradientu

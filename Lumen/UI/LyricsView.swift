@@ -463,7 +463,6 @@ struct LyricsView: View {
                 .foregroundStyle(lyricsInk.opacity(0.92))
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.vertical, 16)
-            sourceFooter
             Spacer().frame(height: 30)
         }
     }
@@ -492,17 +491,6 @@ struct LyricsView: View {
         }
         .foregroundStyle(lyricsInk.opacity(0.7))
         .frame(maxWidth: .infinity)
-    }
-
-    /// Skąd jest tekst (jak "Tekst: …" na końcu tekstu w Apple Music).
-    @ViewBuilder private var sourceFooter: some View {
-        if let source = lyrics.current?.source, !source.isEmpty {
-            let kind = lyrics.current?.hasWords == true ? " · słowo po słowie" : ""
-            Text("Tekst: \(source)\(kind)")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(lyricsInk.opacity(0.42))
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
     }
 
     /// Pusta linijka "intro" od początku piosenki do pierwszej śpiewanej linijki (gdy źródło jej nie ma).
@@ -581,7 +569,6 @@ struct LyricsView: View {
                         .equatable()
                         .id(row.id)
                     }
-                    sourceFooter.padding(.top, 10)
                     Spacer().frame(height: 280)
                 }
             }
