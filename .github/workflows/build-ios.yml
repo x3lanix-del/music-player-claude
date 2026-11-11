@@ -6,6 +6,11 @@ name: Build iOS from ZIP
 
 on:
   workflow_dispatch:
+    inputs:
+      runner:
+        description: "Maszyna: macos-15, macos-latest, macos-15-intel albo macos-26 (gdy jedna stoi w kolejce, spróbuj innej)"
+        required: false
+        default: "macos-15"
   push:          # każdy push na dowolną gałąź odpala build, bez klikania Run workflow
 
 permissions:
@@ -13,7 +18,7 @@ permissions:
 
 jobs:
   build:
-    runs-on: macos-15
+    runs-on: ${{ github.event.inputs.runner || 'macos-15' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
