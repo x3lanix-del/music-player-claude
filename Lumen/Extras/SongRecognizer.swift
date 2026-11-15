@@ -1,7 +1,7 @@
 import SwiftUI
 import AVFAudio
 
-/// Rozpoznawanie piosenki z mikrofonu: nagranie ~10 s wysyłane do AudD (nie wymaga płatnego konta Apple).
+/// Rozpoznawanie piosenki z mikrofonu: nagranie ok. 10 s rozpoznaje `SongID` (Shazam, a w zapasie AudD).
 @MainActor
 final class SongRecognizer: ObservableObject {
     enum State: Equatable {
@@ -19,8 +19,6 @@ final class SongRecognizer: ObservableObject {
     /// Numer bieżącej próby nagrywania (1 albo 2), do podpisu na ekranie.
     @Published private(set) var attempt = 1
 
-    private var token: String { AppKeys.audd }
-
     func start(pausing engine: PlayerEngine) {
         guard task == nil else { return }
         cancelled = false
@@ -32,10 +30,6 @@ final class SongRecognizer: ObservableObject {
             guard let self = self else { return }
             guard granted else {
                 self.finish(.failed("Brak zgody na mikrofon. Włącz ją w Ustawieniach iOS."))
-                return
-            }
-            guard !self.token.isEmpty else {
-                self.finish(.failed("Brak tokena AudD w aplikacji."))
                 return
             }
             let audio = AVAudioSession.sharedInstance()
@@ -58,7 +52,7 @@ final class SongRecognizer: ObservableObject {
                 }
                 self.recorder = rec
                 self.attempt = attempt + 1
-                try? await Task.sleep(nanoseconds: (attempt == 0 ? 9 : 12) * 1_000_000_000)
+                try? await Task.sleep(nanoseconds: (attempt == 0 ? 9 : 11) * 1_000_000_000)
                 rec.stop()
                 self.recorder = nil
                 if self.cancelled || Task.isCancelled { return }
@@ -72,44 +66,10 @@ final class SongRecognizer: ObservableObject {
     }
 
     private func send(file: URL) async -> State {
-        guard let audio = try? Data(contentsOf: file), let url = URL(string: "https://api.audd.io/") else {
-            return .failed("Nie udało się odczytać nagrania.")
-        }
-        let boundary = "Boundary-\(UUID().uuidString)"
-        var body = Data()
-        func field(_ name: String, _ value: String) {
-            body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".utf8))
-        }
-        field("api_token", token)
-        body.append(Data("--\(boundary)\r\nContent-Disposition: form-data; name=\"file\"; filename=\"recognize.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n".utf8))
-        body.append(audio)
-        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
-        var req = URLRequest(url: url)
-        req.httpMethod = "POST"
-        req.timeoutInterval = 30
-        req.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
-        req.httpBody = body
-        do {
-            let (data, _) = try await URLSession.shared.data(for: req)
-            guard let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-                return .failed("Rozpoznawanie nie zadziałało: nieprawidłowa odpowiedź.")
-            }
-            if (obj["status"] as? String) == "error" {
-                let err = obj["error"] as? [String: Any]
-                let code = (err?["error_code"] as? Int) ?? 0
-                let msg = (err?["error_message"] as? String) ?? "nieznany błąd"
-                switch code {
-                case 901: return .failed("Wyczerpany dzienny limit rozpoznawania (AudD). Spróbuj jutro albo podaj własny token.")
-                case 900: return .failed("Nieprawidłowy token AudD.")
-                default: return .failed("Rozpoznawanie nie zadziałało: \(msg)")
-                }
-            }
-            if let r = obj["result"] as? [String: Any], let title = r["title"] as? String {
-                return .found(title: title, artist: (r["artist"] as? String) ?? "")
-            }
-            return .notFound
-        } catch {
-            return .failed("Rozpoznawanie nie zadziałało: \(error.localizedDescription)")
+        switch await SongID.shared.identify(file: file) {
+        case .found(let hit): return .found(title: hit.title, artist: hit.artist)
+        case .notFound: return .notFound
+        case .failed(let message): return .failed(message)
         }
     }
 

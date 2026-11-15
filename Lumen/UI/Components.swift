@@ -2,15 +2,23 @@ import SwiftUI
 
 /// Miniatury piosenek: pamięć (żeby listy nie lagowały) ORAZ dysk. Każda miniatura raz pobrana zostaje na stałe,
 /// więc wszystkie okładki widać też bez internetu i po restarcie aplikacji.
+///
+/// Dwa rozmiary:
+/// - mała (kwadrat 180 px, do wierszy list) - z miniatury mqdefault,
+/// - duża (kwadrat do 360 px, do kafelków i dużych okładek) - z sddefault / hqdefault.
+/// (Wcześniej wszędzie była jedna miniatura o wysokości ok. 100 px, więc duże kafelki były rozmazane.)
 final class ThumbCache: @unchecked Sendable {
     static let shared = ThumbCache()
     private let cache = NSCache<NSURL, UIImage>()
+    private let largeCache = NSCache<NSString, UIImage>()
     private let dir: URL
     private let lock = NSLock()
     private var fetching = Set<String>()
 
     init() {
-        cache.countLimit = 500
+        cache.countLimit = 400
+        largeCache.countLimit = 90
+        largeCache.totalCostLimit = 48 * 1024 * 1024
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSTemporaryDirectory())
         var folder = base.appendingPathComponent("Lumen/Thumbs", isDirectory: true)
@@ -21,14 +29,18 @@ final class ThumbCache: @unchecked Sendable {
         dir = folder
     }
 
-    /// Nazwa pliku na dysku: identyfikator filmu z adresu miniatury (.../vi/<id>/mqdefault.jpg).
-    private func fileURL(for url: URL) -> URL {
+    /// Identyfikator filmu z adresu miniatury (.../vi/<id>/mqdefault.jpg) albo bezpieczna nazwa z całego adresu.
+    private func name(for url: URL) -> String {
         let parts = url.pathComponents
-        if let i = parts.firstIndex(of: "vi"), i + 1 < parts.count {
-            return dir.appendingPathComponent(parts[i + 1] + ".jpg")
-        }
+        if let i = parts.firstIndex(of: "vi"), i + 1 < parts.count { return parts[i + 1] }
         let safe = Data(url.absoluteString.utf8).base64EncodedString().replacingOccurrences(of: "/", with: "_")
-        return dir.appendingPathComponent(String(safe.prefix(80)) + ".jpg")
+        return String(safe.prefix(80))
+    }
+
+    /// Plik małej miniatury. Od 1.37 jest ostrzejsza (kwadrat 180 px, plik "<id>@2.jpg"); starsze, mniejsze
+    /// pliki "<id>.jpg" zostają jako zapas, dopóki nowa się nie pobierze.
+    private func fileURL(for url: URL, legacy: Bool = false) -> URL {
+        dir.appendingPathComponent(name(for: url) + (legacy ? ".jpg" : "@2.jpg"))
     }
 
     func hasOnDisk(_ url: URL) -> Bool { FileManager.default.fileExists(atPath: fileURL(for: url).path) }
@@ -42,13 +54,65 @@ final class ThumbCache: @unchecked Sendable {
             cache.setObject(disk, forKey: url as NSURL)
             return disk
         }
+        // Stara (mniejsza) miniatura z dysku: pokazujemy ją od razu, a ostrzejszą dociągamy w tle na następny raz.
+        let old = fileURL(for: url, legacy: true)
+        if let data = try? Data(contentsOf: old), let disk = UIImage(data: data) {
+            cache.setObject(disk, forKey: url as NSURL)
+            let key = "up:" + url.absoluteString
+            if begin(key) {
+                Task.detached(priority: .utility) { [self] in
+                    _ = await download(url)
+                    end(key)
+                }
+            }
+            return disk
+        }
+        return await download(url)
+    }
+
+    /// Pobiera miniaturę, wycina kwadrat ze środka (okładka), zapisuje w pamięci i na dysku.
+    private func download(_ url: URL) async -> UIImage? {
         guard let (data, resp) = try? await URLSession.shared.data(from: url),
               (resp as? HTTPURLResponse)?.statusCode ?? 200 == 200,
               let full = UIImage(data: data) else { return nil }
-        let small = ArtworkLoader.downscale(full, maxSide: 180)
+        let small = ArtworkLoader.downscale(ArtworkLoader.squareCrop(full) ?? full, maxSide: 180)
         cache.setObject(small, forKey: url as NSURL)
-        if let jpeg = small.jpegData(compressionQuality: 0.85) { try? jpeg.write(to: file, options: .atomic) }
+        if let jpeg = small.jpegData(compressionQuality: 0.85) {
+            try? jpeg.write(to: fileURL(for: url), options: .atomic)
+            try? FileManager.default.removeItem(at: fileURL(for: url, legacy: true))
+        }
         return small
+    }
+
+    // MARK: Duże okładki (kafelki na Głównej, góra playlisty)
+
+    func largeImage(for id: String) -> UIImage? { largeCache.object(forKey: id as NSString) }
+
+    private func keepLarge(_ image: UIImage, id: String) {
+        let cost = Int(image.size.width * image.size.height * image.scale * image.scale) * 4
+        largeCache.setObject(image, forKey: id as NSString, cost: cost)
+    }
+
+    /// Ostra, kwadratowa okładka piosenki: sddefault (640x480), a gdy jej nie ma - hqdefault (480x360).
+    func loadLarge(_ id: String) async -> UIImage? {
+        if let hit = largeImage(for: id) { return hit }
+        let file = dir.appendingPathComponent("\(id)@L.jpg")
+        if let data = try? Data(contentsOf: file), let disk = UIImage(data: data) {
+            keepLarge(disk, id: id)
+            return disk
+        }
+        for quality in ["sddefault", "hqdefault"] {
+            guard let url = URL(string: "https://i.ytimg.com/vi/\(id)/\(quality).jpg"),
+                  let (data, resp) = try? await URLSession.shared.data(from: url),
+                  (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let full = UIImage(data: data),
+                  let square = ArtworkLoader.squareCrop(full) else { continue }
+            let image = ArtworkLoader.downscale(square, maxSide: 360)
+            keepLarge(image, id: id)
+            if let jpeg = image.jpegData(compressionQuality: 0.85) { try? jpeg.write(to: file, options: .atomic) }
+            return image
+        }
+        return nil
     }
 
     /// Pobiera w tle miniatury wszystkich podanych piosenek, które nie są jeszcze zapisane na dysku.
@@ -83,11 +147,16 @@ struct TrackThumb: View {
     var cornerRadius: CGFloat? = nil
     @State private var image: UIImage?
 
+    /// Duże kafelki (od 80 pt) dostają ostrzejszą okładkę; małe wiersze list - zwykłą miniaturę.
+    private var wantsLarge: Bool { size >= 80 && !track.isRadio }
+
     init(track: Track, size: CGFloat = 52, cornerRadius: CGFloat? = nil) {
         self.track = track
         self.size = size
         self.cornerRadius = cornerRadius
-        _image = State(initialValue: track.artworkURL.flatMap { ThumbCache.shared.image(for: $0) })
+        var ready = track.artworkURL.flatMap { ThumbCache.shared.image(for: $0) }
+        if size >= 80, !track.isRadio, let sharp = ThumbCache.shared.largeImage(for: track.id) { ready = sharp }
+        _image = State(initialValue: ready)
     }
 
     var body: some View {
@@ -96,16 +165,27 @@ struct TrackThumb: View {
                 .fill(ink.opacity(0.12))
                 .overlay(Image(systemName: "music.note").foregroundStyle(ink.opacity(0.5)))
             if let image = image {
-                Image(uiImage: image).resizable().scaledToFill()
+                Image(uiImage: image).resizable().interpolation(.high).scaledToFill()
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius ?? size * 0.2, style: .continuous))
         .task(id: track.id) {
             guard let url = track.artworkURL else { image = nil; return }
-            if let hit = ThumbCache.shared.image(for: url) { image = hit; return }
-            image = nil
-            image = await ThumbCache.shared.load(url)
+            if wantsLarge, let sharp = ThumbCache.shared.largeImage(for: track.id) {
+                image = sharp
+                return
+            }
+            // Najpierw to, co jest od ręki (mała miniatura), potem - dla dużych kafelków - ostra okładka.
+            if let hit = ThumbCache.shared.image(for: url) {
+                image = hit
+            } else {
+                image = nil
+                image = await ThumbCache.shared.load(url)
+            }
+            if wantsLarge, let sharp = await ThumbCache.shared.loadLarge(track.id) {
+                image = sharp
+            }
         }
     }
 }

@@ -87,7 +87,7 @@ struct TourStep {
         TourStep(tab: .library, target: .libraryAdd, icon: "music.note.list", title: "Biblioteka",
                  text: "Tu są Twoje playlisty i Ulubione. Plus tworzy nową playlistę albo importuje ją z linku (YouTube, Spotify). Przytrzymaj playlistę, żeby zmienić nazwę, ikonę albo ją udostępnić."),
         TourStep(tab: .radio, target: .tab(.radio), icon: "dot.radiowaves.left.and.right", title: "Radio",
-                 text: "Stacje radiowe na żywo. Aplikacja pokazuje, co teraz leci, i tekst tej piosenki."),
+                 text: "Stacje radiowe na żywo. Aplikacja pokazuje, jaka piosenka teraz leci."),
         TourStep(tab: .home, target: .miniPlayer, icon: "play.circle.fill", title: "Odtwarzacz",
                  text: "Gdy coś gra, nad zakładkami pojawia się mały pasek z piosenką. Dotknij go, żeby otworzyć duży odtwarzacz: tekst, kolejka, serce (ulubione) i głośniki. Muzyka gra też po zablokowaniu telefonu."),
         TourStep(tab: .home, icon: "quote.bubble.fill", title: "Tekst piosenki",

@@ -76,6 +76,9 @@ final class RadioMetaReader: NSObject, AVPlayerItemMetadataOutputPushDelegate {
 
 // MARK: - Ekran odtwarzacza radia
 
+/// Odtwarzacz radia wygląda jak odtwarzacz zwykłej piosenki ze schowanym tekstem: duża ikona stacji, pod nią
+/// tytuł (grany utwór albo nazwa stacji), pasek "NA ŻYWO" w miejscu paska postępu i te same przyciski.
+/// Radio nie pokazuje tekstu piosenek.
 struct RadioNowPlayingView: View {
     @Environment(\.ink) private var ink
     @Environment(\.accentInk) private var accentInk
@@ -83,27 +86,46 @@ struct RadioNowPlayingView: View {
     @EnvironmentObject var settings: AppSettings
     @EnvironmentObject var toast: ToastCenter
     @State private var showDevices = false
-    @State private var showLyrics = true
+    @State private var prevTaps = 0
+    @State private var nextTaps = 0
 
     private var station: RadioStation? { engine.currentStation }
     /// Stacja jeszcze się łączy (nic jeszcze nie zagrało).
     private var connecting: Bool { engine.wantsPlaying && !engine.isPlaying }
+    private var stationName: String { station?.name ?? engine.currentTrack?.title ?? "Radio" }
+
+    /// Grany utwór, a gdy stacja go nie podaje - nazwa stacji.
+    private var title: String { engine.radioSong?.title ?? stationName }
+
+    private var subtitle: String {
+        if let song = engine.radioSong {
+            return song.artist.isEmpty ? stationName : "\(song.artist) · \(stationName)"
+        }
+        if connecting { return "Łączenie ze stacją…" }
+        if engine.radioDetecting { return "Wykrywam utwór…" }
+        if let detail = station?.detail, !detail.isEmpty { return detail }
+        return "Radio na żywo"
+    }
 
     var body: some View {
         ZStack {
             AnimatedBackground(isActive: true, player: true)
-            VStack(spacing: 14) {
-                Capsule().fill(ink.opacity(0.3)).frame(width: 40, height: 5).padding(.top, 8)
+            VStack(spacing: 0) {
+                Capsule()
+                    .fill(ink.opacity(0.35))
+                    .frame(width: 40, height: 5)
+                    .padding(.top, 8)
+                    .padding(.bottom, 14)
 
-                header
-                songCard
-                lyricsArea
+                bigIcon
                 liveBar
-                VolumeRow()
+                    .padding(.top, 6)
                 controls
+                VolumeRow().padding(.bottom, 14)
+                bottomRow
+                    .padding(.bottom, 10)
             }
-            .padding(.horizontal, 22)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 24)
         }
         .sheet(isPresented: $showDevices) {
             DevicesSheet()
@@ -114,174 +136,162 @@ struct RadioNowPlayingView: View {
         }
     }
 
-    private var header: some View {
-        HStack(spacing: 14) {
-            RadioIcon(station: station, size: 68, radius: 16, active: engine.isPlaying)
-            VStack(alignment: .leading, spacing: 5) {
-                Text(station?.name ?? engine.currentTrack?.title ?? "Radio")
-                    .font(.system(size: 21, weight: .bold))
-                    .foregroundStyle(ink)
-                    .lineLimit(2)
-                HStack(spacing: 6) {
-                    Circle().fill(connecting ? Color.orange : Color.red).frame(width: 8, height: 8)
-                    Text(connecting ? "Łączenie…" : "NA ŻYWO")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(ink.opacity(0.75))
-                    if let d = station?.detail, !d.isEmpty {
-                        Text("· \(d)")
-                            .font(.system(size: 12))
-                            .foregroundStyle(ink.opacity(0.6))
-                            .lineLimit(1)
-                    }
+    // MARK: Pieces
+
+    private var bigIcon: some View {
+        VStack(spacing: 22) {
+            Spacer(minLength: 0)
+            RadioIcon(station: station, size: 310, radius: 22, active: engine.isPlaying)
+                .shadow(color: .black.opacity(0.4), radius: 24, y: 12)
+                .modifier(FloatMotion(enabled: engine.isPlaying))
+                .scaleEffect(engine.isPlaying ? 1 : 0.86)
+                .animation(.spring(response: 0.5, dampingFraction: 0.75), value: engine.isPlaying)
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(ink)
+                        .lineLimit(2)
+                    Text(subtitle)
+                        .font(.system(size: 18))
+                        .foregroundStyle(ink.opacity(0.6))
+                        .lineLimit(1)
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .animation(.easeInOut(duration: 0.3), value: title)
+                moreMenu
             }
             Spacer(minLength: 0)
-            Button { showDevices = true } label: {
-                Image(systemName: "airplayaudio")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(ink)
-                    .frame(width: 46, height: 46)
-                    .glass(Circle(), interactive: true)
-                    .contentShape(Circle())
-            }
-            .buttonStyle(.plain)
-            moreMenu
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var sleepTitle: String {
+        if let at = engine.sleepAt { return "Wyłącznik czasowy (do \(at.formatted(date: .omitted, time: .shortened)))" }
+        return "Wyłącznik czasowy"
     }
 
     private var moreMenu: some View {
         Menu {
-            Button { withAnimation(.easeInOut(duration: 0.25)) { showLyrics.toggle() } } label: {
-                Label(showLyrics ? "Ukryj tekst" : "Pokaż tekst", systemImage: showLyrics ? "eye.slash" : "quote.bubble")
+            Button { engine.redetectRadioSong() } label: {
+                Label("Wykryj utwór ponownie", systemImage: "waveform.badge.magnifyingglass")
             }
-            Button { engine.redetectRadioSong() } label: { Label("Wykryj utwór ponownie", systemImage: "waveform.badge.magnifyingglass") }
-            if engine.radioSong != nil && engine.radioPositionKnown {
-                Button { engine.nudgeRadioLyrics(by: 0.5) } label: { Label("Tekst wcześniej (+0,5 s)", systemImage: "arrow.up") }
-                Button { engine.nudgeRadioLyrics(by: -0.5) } label: { Label("Tekst później (−0,5 s)", systemImage: "arrow.down") }
-            }
-            Button { settings.data.translateLyrics.toggle() } label: {
-                Label(settings.data.translateLyrics ? "Wyłącz tłumaczenie tekstu" : "Tłumacz tekst", systemImage: "character.bubble")
+            Menu {
+                if engine.sleepAt != nil {
+                    Button(role: .destructive) { engine.cancelSleepTimer() } label: { Label("Wyłącz", systemImage: "xmark") }
+                }
+                ForEach([15, 30, 60], id: \.self) { minutes in
+                    Button { engine.setSleepTimer(minutes: minutes) } label: { Label("\(minutes) min", systemImage: "timer") }
+                }
+            } label: {
+                Label(sleepTitle, systemImage: engine.sleepAt != nil ? "moon.zzz.fill" : "moon.zzz")
             }
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 17, weight: .bold))
                 .foregroundStyle(ink)
-                .frame(width: 46, height: 46)
+                .frame(width: 48, height: 48)
                 .glass(Circle(), interactive: true)
                 .contentShape(Circle())
         }
     }
 
-    private var songCard: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("TERAZ GRA")
-                .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(ink.opacity(0.55))
-            if connecting && engine.radioSong == nil {
-                HStack(spacing: 10) {
-                    ProgressView().tint(accentInk)
-                    Text("Łączenie ze stacją…")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(ink.opacity(0.85))
-                }
-            } else if let s = engine.radioSong {
-                Text(s.title)
-                    .font(.system(size: 22, weight: .bold))
-                    .foregroundStyle(ink)
-                    .lineLimit(2)
-                if !s.artist.isEmpty {
-                    Text(s.artist)
-                        .font(.system(size: 16, weight: .medium))
-                        .foregroundStyle(ink.opacity(0.75))
-                        .lineLimit(1)
-                }
-            } else if engine.radioDetecting {
-                HStack(spacing: 10) {
-                    ProgressView().tint(accentInk)
-                    Text("Wykrywam utwór…")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(ink.opacity(0.85))
-                }
-            } else {
-                Text("Brak informacji o utworze")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(ink.opacity(0.8))
-                Text("Stacja nie podaje tytułów albo leci wstawka (reklama, wiadomości).")
-                    .font(.system(size: 13))
-                    .foregroundStyle(ink.opacity(0.6))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .glass(RoundedRectangle(cornerRadius: 22, style: .continuous))
-    }
-
-    /// Brak tekstu (albo ukryty / nie wiadomo, co gra): jak przy piosence bez tekstu - duża ikona stacji.
-    private var noLyrics: Bool {
-        if engine.radioSong == nil || !showLyrics { return true }
-        switch engine.lyrics.phase {
-        case .notFound, .instrumental, .offline: return true
-        default: return false
-        }
-    }
-
-    @ViewBuilder private var lyricsArea: some View {
-        Group {
-            if noLyrics {
-                VStack(spacing: 0) {
-                    Spacer(minLength: 0)
-                    RadioIcon(station: station, size: 270, radius: 30, active: engine.isPlaying)
-                        .shadow(color: .black.opacity(0.35), radius: 22, y: 10)
-                        .scaleEffect(engine.isPlaying ? 1 : 0.88)
-                        .animation(.spring(response: 0.5, dampingFraction: 0.75), value: engine.isPlaying)
-                    Spacer(minLength: 0)
-                }
-                .frame(maxWidth: .infinity)
-            } else {
-                LyricsView(lyrics: engine.lyrics)
-            }
-        }
-        .frame(maxHeight: .infinity)
-    }
-
-    /// Pasek jak przy piosence, ale pełny i z napisem "NA ŻYWO" (transmisji nie da się przewijać).
+    /// W miejscu paska postępu: pełny pasek z napisem "NA ŻYWO" (transmisji nie da się przewijać).
     private var liveBar: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 2) {
             ZStack(alignment: .leading) {
                 Capsule().fill(ink.opacity(0.25))
                 Capsule().fill(accentInk.opacity(connecting ? 0.4 : 0.92))
             }
             .frame(height: 7)
+            .frame(height: 44)
+            .animation(.easeInOut(duration: 0.3), value: connecting)
             HStack(spacing: 6) {
                 Circle().fill(connecting ? Color.orange : Color.red).frame(width: 8, height: 8)
                 Text(connecting ? "ŁĄCZENIE…" : "NA ŻYWO")
-                    .font(.system(size: 13, weight: .bold))
-                    .foregroundStyle(ink.opacity(0.75))
                 Spacer()
+                if engine.radioSong != nil {
+                    Text(stationName).lineLimit(1)
+                }
             }
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(ink.opacity(0.6))
         }
     }
 
+    /// Te same przyciski co przy piosence (poprzednia / następna = poprzednia / następna stacja).
     private var controls: some View {
-        HStack(spacing: 36) {
-            Button { engine.previous() } label: {
-                Image(systemName: "backward.fill").font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(ink).frame(width: 64, height: 64).contentShape(Rectangle())
+        HStack {
+            Spacer()
+            Button {
+                prevTaps += 1
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                engine.previous()
+            } label: {
+                Image(systemName: "backward.fill").font(.system(size: 34)).foregroundStyle(ink)
+                    .symbolEffect(.bounce, value: prevTaps)
+                    .frame(width: 70, height: 70)
+                    .contentShape(Rectangle())
             }
-            Button { engine.togglePlayPause() } label: {
-                Image(systemName: engine.wantsPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 32, weight: .bold))
-                    .foregroundStyle(ink)
-                    .frame(width: 78, height: 78)
-                    .glass(Circle(), interactive: true)
+            Spacer()
+            Button {
+                UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+                engine.togglePlayPause()
+            } label: {
+                ZStack {
+                    if connecting && engine.isBuffering {
+                        ProgressView().tint(accentInk).scaleEffect(1.4)
+                    } else {
+                        Image(systemName: engine.wantsPlaying ? "pause.fill" : "play.fill")
+                            .font(.system(size: 50)).foregroundStyle(ink)
+                            .contentTransition(.symbolEffect(.replace))
+                    }
+                }
+                .frame(width: 80, height: 80)
+                .contentShape(Rectangle())
+                .animation(.snappy(duration: 0.25), value: engine.wantsPlaying)
             }
-            Button { engine.next() } label: {
-                Image(systemName: "forward.fill").font(.system(size: 26, weight: .semibold))
-                    .foregroundStyle(ink).frame(width: 64, height: 64).contentShape(Rectangle())
+            Spacer()
+            Button {
+                nextTaps += 1
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                engine.next()
+            } label: {
+                Image(systemName: "forward.fill").font(.system(size: 34)).foregroundStyle(ink)
+                    .symbolEffect(.bounce, value: nextTaps)
+                    .frame(width: 70, height: 70)
+                    .contentShape(Rectangle())
             }
+            Spacer()
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressScaleStyle())
+        .padding(.vertical, 4)
+    }
+
+    private var bottomRow: some View {
+        HStack {
+            Spacer()
+            Button { engine.redetectRadioSong() } label: {
+                Image(systemName: "waveform.badge.magnifyingglass")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(ink)
+                    .frame(width: 52, height: 52)
+                    .glass(Circle(), interactive: true)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(PressScaleStyle(scale: 0.9))
+            .accessibilityLabel("Wykryj utwór ponownie")
+            Spacer()
+            Button { showDevices = true } label: {
+                Image(systemName: "airplayaudio")
+                    .font(.system(size: 19, weight: .semibold))
+                    .foregroundStyle(ink)
+                    .frame(width: 52, height: 52)
+                    .glass(Circle(), interactive: true)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(PressScaleStyle(scale: 0.9))
+            .accessibilityLabel("Głośniki i urządzenia")
+            Spacer()
+        }
     }
 }

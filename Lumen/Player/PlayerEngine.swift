@@ -723,11 +723,6 @@ final class PlayerEngine: ObservableObject {
         player.isMuted = muted
     }
 
-    /// Ręczne przesunięcie tekstu w radiu (dodatnie = tekst pojawia się wcześniej).
-    func nudgeRadioLyrics(by seconds: Double) {
-        lyrics.setOffset(((lyrics.offset + seconds) * 100).rounded() / 100)
-    }
-
     /// Ponowne wykrywanie utworu na żądanie (menu radia).
     func redetectRadioSong() {
         guard isRadio, let t = currentTrack else { return }
@@ -785,7 +780,7 @@ final class PlayerEngine: ObservableObject {
         applyRadioSong(song, position: 0, known: alreadySeen)
     }
 
-    /// Ustawia grany utwór. Gdy to nowa piosenka, od razu szuka jej tekstu (z animacją, jeśli znamy pozycję).
+    /// Ustawia grany utwór (tytuł i wykonawcę na ekranie radia i na ekranie blokady). Radio nie pokazuje tekstu.
     private func applyRadioSong(_ song: RadioSong, position: Double, known: Bool) {
         if let cur = radioSong, cur.matches(song) {
             if known && (!radioPositionKnown || abs(livePlaybackTime() - position) > 3) { setRadioPosition(position) }
@@ -794,7 +789,6 @@ final class PlayerEngine: ObservableObject {
         radioSong = song
         radioDetecting = false
         if known { setRadioPosition(position) } else { radioPositionKnown = false }
-        lyrics.load(track: Track(id: song.cacheID, title: song.title, artist: song.artist, duration: 0), offset: 0, stretch: 1)
         updateNowPlaying()
     }
 
@@ -806,7 +800,7 @@ final class PlayerEngine: ObservableObject {
     }
 
     /// Wykrywanie utworu: najpierw dajemy stacji chwilę na podanie tytułu (metadane), a gdy go nie podaje,
-    /// nagrywamy kilka sekund strumienia i rozpoznajemy go (AudD). Rozpoznanie podaje też miejsce w piosence.
+    /// nagrywamy kilka sekund strumienia i rozpoznajemy go (jak przy rozpoznawaniu z mikrofonu).
     private func startRadioDetection(for track: Track, immediate: Bool = false) {
         radioDetectTask?.cancel()
         radioDetecting = (radioSong == nil)
@@ -829,13 +823,14 @@ final class PlayerEngine: ObservableObject {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     continue
                 }
-                if me.radioHasMeta && me.radioPositionKnown { me.radioDetecting = false; return }
-                if attempt >= 40 || (me.radioHasMeta && attempt >= 2) { me.radioDetecting = false; return }
+                // Stacja sama podaje tytuły: nie ma czego rozpoznawać.
+                if me.radioHasMeta { me.radioDetecting = false; return }
+                if attempt >= 40 { me.radioDetecting = false; return }
                 attempt += 1
                 await me.recognizeRadio(trackID: id)
                 guard !Task.isCancelled, me.currentTrack?.id == id else { return }
                 me.radioDetecting = false
-                if me.radioHasMeta && me.radioPositionKnown { return }
+                if me.radioHasMeta { return }
                 let wait: UInt64 = (me.radioSong == nil && attempt < 3) ? 25 : 90
                 try? await Task.sleep(nanoseconds: wait * 1_000_000_000)
             }
@@ -844,14 +839,15 @@ final class PlayerEngine: ObservableObject {
 
     private func recognizeRadio(trackID: String) async {
         guard let url = radioURLs[trackID] else { return }
-        let started = Date()
-        guard let clip = await StreamClipCapture.capture(url: url, seconds: 12, maxBytes: 700_000),
-              let hit = await AudDClient.recognize(data: clip.data, fileName: clip.fileName, mime: clip.mime) else { return }
-        guard isRadio, currentTrack?.id == trackID else { return }
-        // Pozycja teraz = miejsce, w którym zaczynała się próbka + czas, który od tego upłynął,
-        // minus opóźnienie odtwarzacza względem transmisji na żywo (ok. 3 s).
-        let position = hit.timecode + Date().timeIntervalSince(started) - 3.0
-        applyRadioSong(RadioSong(artist: hit.artist, title: hit.title), position: position, known: true)
+        guard let clip = await StreamClipCapture.capture(url: url, seconds: 12, maxBytes: 700_000) else { return }
+        // Próbka trafia do pliku tymczasowego (z rozszerzeniem, po którym system rozpozna format).
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("radio-clip-" + clip.fileName)
+        guard (try? clip.data.write(to: file, options: .atomic)) != nil else { return }
+        // Radio pyta co chwilę, więc używa tylko drogi bez limitu (mała, darmowa pula AudD zostaje dla mikrofonu).
+        let outcome = await SongID.shared.identify(file: file, allowAudD: false)
+        try? FileManager.default.removeItem(at: file)
+        guard case .found(let hit) = outcome, isRadio, currentTrack?.id == trackID else { return }
+        applyRadioSong(RadioSong(artist: hit.artist, title: hit.title), position: 0, known: false)
     }
 
     /// Gra stacje radiowe (transmisja na żywo).

@@ -1,3 +1,19 @@
+## 1.37.0
+- **Rozpoznawanie piosenek naprawione.** Wbudowany token AudD przestał działać („Nieprawidłowy token AudD”),
+  a aplikacja nie miała innej drogi. Teraz:
+  1. najpierw Shazam - odcisk dźwięku liczony jest na telefonie (ShazamKit) i wysyłany do Shazama; bez tokena
+     i bez dziennego limitu,
+  2. w zapasie AudD: token z aplikacji → bez tokena (darmowa pula) → publiczny token testowy; token odrzucony
+     jako nieprawidłowy nie jest więcej używany, a komunikaty mówią po ludzku, co się stało.
+  Własny token AudD można wpisać w `project.yml` (`AUDD_TOKEN`).
+- **Radio wygląda jak zwykła piosenka ze schowanym tekstem:** duża ikona stacji, pod nią grany utwór i wykonawca
+  (albo nazwa stacji), pasek „NA ŻYWO” w miejscu paska postępu, te same przyciski co przy piosence. Radio nie
+  pokazuje już tekstów (i ich nie pobiera). W menu •••: „Wykryj utwór ponownie” i wyłącznik czasowy.
+  Utwór w radiu bez tytułów w strumieniu rozpoznaje ta sama, darmowa droga co mikrofon.
+- **Ostrzejsze okładki:** duże kafelki (Główna, góra playlisty) biorą okładkę w wyższej rozdzielczości
+  (do 360 px zamiast ok. 100 px), a miniatury na listach są zapisywane jako kwadrat 180 px. Stare, mniejsze
+  miniatury podmieniają się w tle.
+
 ## 1.36.0 - przewodnik ze strzałką
 - **Nowy przewodnik po aplikacji** (zamiast kartek do przewijania): aplikacja sama przechodzi po zakładkach,
   przyciemnia ekran, podświetla kolejny element, wskazuje go podskakującą strzałką i w dymku opisuje, do czego
